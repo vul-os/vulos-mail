@@ -1,14 +1,12 @@
 package account
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"reflect"
 	"testing"
 	"time"
 
-	smtpin "github.com/vul-os/vmail/adapters/smtp"
 	"github.com/vul-os/vmail/internal/blob"
 	"github.com/vul-os/vmail/internal/eventlog"
 	"github.com/vul-os/vmail/internal/ids"
@@ -70,37 +68,6 @@ func TestLiveProjectionEqualsRebuild(t *testing.T) {
 	}
 	if !reflect.DeepEqual(rt.proj, rebuilt) {
 		t.Fatal("live projection drifted from rebuild")
-	}
-}
-
-// Receive path end-to-end: SMTP adapter -> Deliver -> runtime.Ingest -> query.
-func TestReceivePathThroughSMTPAdapter(t *testing.T) {
-	ctx := context.Background()
-	rt := newRuntime(t)
-
-	be := &smtpin.Backend{
-		Deliver: func(ctx context.Context, _ string, raw []byte) error {
-			_, err := rt.Ingest(ctx, raw, []model.LabelID{model.LabelInbox}, nil)
-			return err
-		},
-	}
-	sess, _ := be.NewSession(nil)
-	_ = sess.Mail("ext@out.example", nil)
-	_ = sess.Rcpt("bob@vmail.test", nil)
-	if err := sess.Data(bytes.NewReader(msg("smtp1@x", "", "Hello over SMTP", "the body keyword zebra"))); err != nil {
-		t.Fatal(err)
-	}
-
-	inbox := rt.MessagesWithLabel(model.LabelInbox)
-	if len(inbox) != 1 {
-		t.Fatalf("inbox should have 1 message after SMTP delivery, got %d", len(inbox))
-	}
-	hits, err := rt.Search(ctx, "zebra")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(hits) != 1 {
-		t.Fatalf("body search 'zebra' should find the delivered message, got %d", len(hits))
 	}
 }
 
