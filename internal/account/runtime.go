@@ -128,6 +128,14 @@ func (r *Runtime) Expunge(ctx context.Context, msgID model.ID) error {
 	return r.appendApply(ctx, "user", event.MessageExpunged{MessageID: msgID})
 }
 
+func (r *Runtime) RenameLabel(ctx context.Context, labelID model.LabelID, name string) error {
+	return r.appendApply(ctx, "user", event.LabelRenamed{LabelID: labelID, Name: name})
+}
+
+func (r *Runtime) DeleteLabel(ctx context.Context, labelID model.LabelID) error {
+	return r.appendApply(ctx, "user", event.LabelDeleted{LabelID: labelID})
+}
+
 // --- reads (return deep copies; safe to retain after return) ---
 
 // HighestSeq is the account's current MODSEQ basis.
@@ -174,6 +182,23 @@ func (r *Runtime) Search(ctx context.Context, query string) ([]*model.Message, e
 // Body returns the raw stored bytes for a message.
 func (r *Runtime) Body(ctx context.Context, ref model.BlobRef) ([]byte, error) {
 	return r.store.Get(ctx, ref)
+}
+
+// Message returns a copy of one message by id.
+func (r *Runtime) Message(id model.ID) (*model.Message, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	m := r.proj.Messages[id]
+	if m == nil {
+		return nil, false
+	}
+	return copyMessage(m), true
+}
+
+// Records returns the full event log (read-only), for edge projections such as
+// the IMAP UID view that fold the same log independently.
+func (r *Runtime) Records(ctx context.Context) ([]eventlog.Record, error) {
+	return r.log.ReadFrom(ctx, 1)
 }
 
 func copyAll(src []*model.Message) []*model.Message {

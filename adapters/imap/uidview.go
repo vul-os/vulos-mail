@@ -119,6 +119,15 @@ func RebuildView(ctx context.Context, log eventlog.Log) (*View, error) {
 	return v, nil
 }
 
+// ViewFrom folds an already-read slice of records into a fresh view.
+func ViewFrom(recs []eventlog.Record) *View {
+	v := NewView()
+	for _, r := range recs {
+		v.Apply(r)
+	}
+	return v
+}
+
 // --- queries the IMAP Session adapter uses ---
 
 // UIDValidity returns the mailbox's UIDVALIDITY (DefaultUIDValidity, or the

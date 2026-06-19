@@ -3,6 +3,7 @@ module github.com/vul-os/vmail
 go 1.25
 
 require (
+	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-message v0.18.2
 	github.com/emersion/go-smtp v0.24.0
 )
