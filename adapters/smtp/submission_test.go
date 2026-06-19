@@ -3,6 +3,7 @@ package smtpin_test
 import (
 	"context"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	smtpin "github.com/vul-os/vmail/adapters/smtp"
 	"github.com/vul-os/vmail/internal/account"
 	"github.com/vul-os/vmail/internal/blob"
+	"github.com/vul-os/vmail/internal/dkim"
 	"github.com/vul-os/vmail/internal/eventlog"
 	"github.com/vul-os/vmail/internal/ids"
 	"github.com/vul-os/vmail/internal/model"
@@ -98,6 +100,63 @@ func TestSubmissionStoresSentAndEnqueues(t *testing.T) {
 	}
 	if !domains["gmail.com"] || !domains["yahoo.com"] {
 		t.Errorf("destination domains = %v", domains)
+	}
+}
+
+// Submitted mail is DKIM-signed with the From domain's key and verifies.
+func TestSubmissionDKIMSigns(t *testing.T) {
+	ctx := context.Background()
+	store, _ := blob.NewFS(t.TempDir())
+	log := eventlog.NewMem(func() time.Time { return time.Unix(0, 0).UTC() })
+	rt, _ := account.Open(ctx, log, store, ids.NewGen(), nil)
+
+	key, txt, err := dkim.GenerateRSAKey(1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer := dkim.NewSigner()
+	signer.AddDomain("vmail.test", "s1", key)
+
+	var enqueued []mtaout.OutMessage
+	be := &smtpin.SubmitBackend{
+		Auth:    func(string, string) (*account.Runtime, string, error) { return rt, "t", nil },
+		Enqueue: func(m mtaout.OutMessage) { enqueued = append(enqueued, m) },
+		Signer:  signer,
+	}
+	sess, _ := be.NewSession(nil)
+	// Authenticate via the SASL PLAIN server (sets the runtime on the session).
+	authSrv, err := sess.(gosmtp.AuthSession).Auth(sasl.Plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := authSrv.Next([]byte("\x00alice\x00pw")); err != nil { // authzid\0authcid\0passwd
+		t.Fatalf("sasl: %v", err)
+	}
+
+	if err := sess.Mail("alice@vmail.test", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Rcpt("bob@gmail.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	raw := "From: alice@vmail.test\r\nTo: bob@gmail.com\r\nSubject: Signed\r\n\r\nhello\r\n"
+	if err := sess.Data(strings.NewReader(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if len(enqueued) != 1 {
+		t.Fatalf("expected 1 enqueued, got %d", len(enqueued))
+	}
+	results, err := dkim.Verify(enqueued[0].Raw, func(d string) ([]string, error) {
+		if d == "s1._domainkey.vmail.test" {
+			return []string{txt}, nil
+		}
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dkim.Aligned(results, "vmail.test") {
+		t.Errorf("submitted mail should carry an aligned DKIM signature, got %+v", results)
 	}
 }
 

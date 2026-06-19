@@ -10,6 +10,7 @@ import (
 	gosmtp "github.com/emersion/go-smtp"
 
 	"github.com/vul-os/vmail/internal/account"
+	"github.com/vul-os/vmail/internal/dkim"
 	"github.com/vul-os/vmail/internal/model"
 	"github.com/vul-os/vmail/services/mtaout"
 )
@@ -25,6 +26,9 @@ type SubmitBackend struct {
 	Enqueue func(mtaout.OutMessage)
 	// Class tags submitted mail (defaults to Transactional).
 	Class mtaout.TrafficClass
+	// Signer, if set, DKIM-signs each message with the From domain's key before
+	// it is stored and sent (no key for the domain → sent unsigned).
+	Signer *dkim.Signer
 }
 
 func (b *SubmitBackend) NewSession(_ *gosmtp.Conn) (gosmtp.Session, error) {
@@ -92,6 +96,13 @@ func (s *submitSession) Data(r io.Reader) error {
 		return err
 	}
 	ctx := context.Background()
+
+	// DKIM-sign with the From domain's key (aligned signing) before storing/sending.
+	if s.backend.Signer != nil {
+		if signed, err := s.backend.Signer.Sign(domainOf(s.from), raw); err == nil {
+			raw = signed
+		}
+	}
 
 	// Store the sender's own copy (Sent, already read).
 	if _, err := s.rt.Ingest(ctx, raw, []model.LabelID{model.LabelSent}, []model.Flag{model.FlagSeen}); err != nil {

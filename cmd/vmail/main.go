@@ -52,6 +52,9 @@ func main() {
 	})
 
 	mgr := server.NewManager(dataDir, blobs, sched)
+	if txt, err := mgr.EnsureDKIM(domain, "vmail"); err == nil && txt != "" {
+		log.Printf("DKIM: publish TXT at vmail._domainkey.%s :  %s", domain, txt)
+	}
 	if acct != "" && pass != "" {
 		mgr.AddAccount(acct, pass)
 		log.Printf("provisioned account %s", acct)
@@ -61,7 +64,7 @@ func main() {
 
 	// Listeners.
 	mx := smtpin.NewServer(&smtpin.Backend{Deliver: mgr.Deliver}, mxAddr, domain)
-	sub := smtpin.NewSubmitServer(&smtpin.SubmitBackend{Auth: mgr.AuthSubmit, Enqueue: mgr.Enqueue}, subAddr, domain)
+	sub := smtpin.NewSubmitServer(&smtpin.SubmitBackend{Auth: mgr.AuthSubmit, Enqueue: mgr.Enqueue, Signer: mgr.Signer}, subAddr, domain)
 	imapBe := &imapadapter.Backend{Auth: func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) }}
 	imapSrv := imapadapter.NewServer(imapBe, nil)
 

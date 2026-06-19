@@ -18,6 +18,7 @@ import (
 
 	"github.com/vul-os/vmail/internal/account"
 	"github.com/vul-os/vmail/internal/blob"
+	"github.com/vul-os/vmail/internal/dkim"
 	"github.com/vul-os/vmail/internal/eventlog"
 	"github.com/vul-os/vmail/internal/ids"
 	"github.com/vul-os/vmail/internal/model"
@@ -31,6 +32,9 @@ type Manager struct {
 	gen   *ids.Gen
 	sched *mtaout.Scheduler
 
+	// Signer holds outbound DKIM keys (shared with the submission backend).
+	Signer *dkim.Signer
+
 	mu       sync.Mutex
 	accounts map[string]*account.Runtime
 	creds    map[string]string // address -> password (placeholder)
@@ -41,9 +45,25 @@ type Manager struct {
 func NewManager(dir string, blobs blob.Store, sched *mtaout.Scheduler) *Manager {
 	return &Manager{
 		dir: dir, blobs: blobs, gen: ids.NewGen(), sched: sched,
+		Signer:   dkim.NewSigner(),
 		accounts: map[string]*account.Runtime{},
 		creds:    map[string]string{},
 	}
+}
+
+// EnsureDKIM generates and registers an outbound DKIM key for domain if absent,
+// returning the DNS TXT record to publish at <selector>._domainkey.<domain>.
+// NOTE: keys are in-memory/ephemeral here; persisting them is a later wave.
+func (m *Manager) EnsureDKIM(domain, selector string) (string, error) {
+	if m.Signer.Has(domain) {
+		return "", nil
+	}
+	key, txt, err := dkim.GenerateRSAKey(2048)
+	if err != nil {
+		return "", err
+	}
+	m.Signer.AddDomain(domain, selector, key)
+	return txt, nil
 }
 
 // AddAccount registers an address with a password (placeholder provisioning).
