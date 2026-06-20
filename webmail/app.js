@@ -236,6 +236,49 @@
     } catch (ex) { toast(ex.message); }
   });
 
+  // ── calendar ──────────────────────────────────────────────────────
+  let eventsCache = [];
+  async function openCalendar() {
+    $("#calendar").hidden = false;
+    $("#calendar-list").innerHTML = '<div class="contacts-empty">Loading…</div>';
+    try { eventsCache = await jmap.events(); } catch { eventsCache = []; }
+    renderCalendar();
+    $("#event-title").focus();
+  }
+  function renderCalendar() {
+    const evs = eventsCache.slice().sort((a, b) => new Date(a.start) - new Date(b.start));
+    const box = $("#calendar-list");
+    if (!evs.length) { box.innerHTML = '<div class="contacts-empty">No events yet. Add one above.</div>'; return; }
+    box.innerHTML = ""; let lastDay = "";
+    for (const ev of evs) {
+      const d = new Date(ev.start);
+      const day = d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+      if (day !== lastDay) { box.appendChild(el("div", "cal-day", esc(day))); lastDay = day; }
+      const row = el("div", "cal-ev",
+        `<span class="cal-time">${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>` +
+        `<span class="cal-dot"></span><span class="cal-title">${esc(ev.summary || "(untitled)")}</span>` +
+        `<span class="rm" title="Delete">✕</span>`);
+      row.querySelector(".rm").onclick = async () => { await jmap.delEvent(ev.id); eventsCache = eventsCache.filter((x) => x.id !== ev.id); renderCalendar(); toast("Event deleted"); };
+      box.appendChild(row);
+    }
+  }
+  $("#calendar-btn").addEventListener("click", openCalendar);
+  $("#calendar-close").addEventListener("click", () => ($("#calendar").hidden = true));
+  $("#calendar").addEventListener("click", (e) => { if (e.target.id === "calendar") $("#calendar").hidden = true; });
+  $("#event-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const summary = $("#event-title").value.trim();
+    const when = $("#event-when").value;
+    if (!summary) return;
+    const start = when ? new Date(when).toISOString() : new Date().toISOString();
+    try {
+      const r = await jmap.addEvent({ summary, start, end: "" });
+      eventsCache.push({ id: r.id, summary, start, end: "" });
+      $("#event-title").value = ""; $("#event-when").value = "";
+      renderCalendar(); toast("Event added");
+    } catch (ex) { toast(ex.message); }
+  });
+
   // ── multi-select ──────────────────────────────────────────────────
   function toggleSel(row) {
     if (S.selected.has(row.id)) S.selected.delete(row.id); else S.selected.add(row.id);
@@ -512,7 +555,7 @@
       case "s": if (rows[S.sel]) toggleStar(rows[S.sel]); break;
       case "r": if (rows[S.sel]) replyTo(rows[S.sel]); break;
       case "?": toggleShortcuts(true); break;
-      case "Escape": $("#contacts").hidden = true; $("#settings").hidden = true; toggleShortcuts(false); break;
+      case "Escape": $("#contacts").hidden = true; $("#settings").hidden = true; $("#calendar").hidden = true; toggleShortcuts(false); break;
     }
   });
   function move(d) {
@@ -550,6 +593,7 @@
       { label: "Refresh", ic: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>', run: () => $("#refresh").click() },
       { label: "Mark all as read", ic: SYS_ICONS.inbox, run: markAllRead },
       { label: "Contacts", ic: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/>', run: openContacts },
+      { label: "Calendar", ic: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>', run: openCalendar },
       { label: "Settings", ic: '<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 0 0-1.7-1l-.4-2.6h-4l-.4 2.6a7 7 0 0 0-1.7 1l-2.3-1-2 3.4L5 11a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7 7 0 0 0 1.7-1l2.3 1 2-3.4-2-1.5a7 7 0 0 0 .1-1z"/>', run: openSettings },
       { label: "Keyboard shortcuts", k: "?", ic: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4"/><path d="M12 17h.01"/>', run: () => toggleShortcuts(true) },
       { label: "Sign out", ic: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>', run: () => $("#logout").click() },

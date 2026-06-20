@@ -77,6 +77,18 @@
     async delContact(id) {
       await fetch(this.base + "/api/webmail/contacts?id=" + encodeURIComponent(id), { method: "DELETE", headers: this._headers() });
     }
+    async events() {
+      const r = await fetch(this.base + "/api/webmail/calendar", { headers: this._headers() });
+      return r.ok ? r.json() : [];
+    }
+    async addEvent(e) {
+      const r = await fetch(this.base + "/api/webmail/calendar", { method: "POST", headers: this._headers(true), body: JSON.stringify(e) });
+      if (!r.ok) throw new Error("Add failed");
+      return r.json();
+    }
+    async delEvent(id) {
+      await fetch(this.base + "/api/webmail/calendar?id=" + encodeURIComponent(id), { method: "DELETE", headers: this._headers() });
+    }
 
     // Authenticated binary fetch (e.g. attachment download) -> Blob.
     async download(path) {

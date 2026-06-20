@@ -167,7 +167,11 @@ func main() {
 		}
 		return "", false
 	}
-	caldavBe := caldav.New(davAuth, caldav.NewMemStore())
+	calStore, err := caldav.NewFSStore(dataDir + "/dav/calendar")
+	if err != nil {
+		log.Fatalf("calendar store: %v", err)
+	}
+	caldavBe := caldav.New(davAuth, calStore)
 	contactStore, err := carddav.NewFSStore(dataDir + "/dav/contacts")
 	if err != nil {
 		log.Fatalf("contacts store: %v", err)
@@ -274,6 +278,62 @@ func main() {
 		}
 		w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
 		_, _ = w.Write(a.Data)
+	})
+
+	// Calendar (persistent, shared with the CalDAV server), Basic auth.
+	httpMux.HandleFunc("/api/webmail/calendar", func(w http.ResponseWriter, r *http.Request) {
+		u, p, ok := r.BasicAuth()
+		if !ok {
+			w.Header().Set("WWW-Authenticate", `Basic realm="vmail"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if _, err := mgr.AuthIMAP(u, p); err != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			out := []map[string]any{}
+			for _, rsc := range calStore.List(u) {
+				for _, ev := range caldav.ParseEvents(rsc.Data) {
+					out = append(out, map[string]any{"id": rsc.Href, "summary": ev.Summary, "start": ev.Start, "end": ev.End})
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(out)
+		case http.MethodPost:
+			var d struct {
+				Summary string `json:"summary"`
+				Start   string `json:"start"`
+				End     string `json:"end"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&d); err != nil || d.Summary == "" {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			start, _ := time.Parse(time.RFC3339, d.Start)
+			if start.IsZero() {
+				start = time.Now()
+			}
+			end, _ := time.Parse(time.RFC3339, d.End)
+			uid := cgen.New()
+			ics, err := caldav.BuildEvent(caldav.Event{UID: uid, Summary: d.Summary, Start: start, End: end})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			href := uid + ".ics"
+			calStore.Put(u, href, ics)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"id":"` + href + `"}`))
+		case http.MethodDelete:
+			calStore.Delete(u, r.URL.Query().Get("id"))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
 	})
 
 	// Contacts (persistent, shared with the CardDAV server), Basic auth.

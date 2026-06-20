@@ -51,6 +51,9 @@
     <ul class="labels" id="labels"></ul>
     <div class="sidebar-foot">
       <div class="me" id="me"></div>
+      <button class="iconbtn" id="calendar-btn" title="Calendar">
+        <svg viewBox="0 0 24 24" class="ic"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+      </button>
       <button class="iconbtn" id="contacts-btn" title="Contacts">
         <svg viewBox="0 0 24 24" class="ic"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/></svg>
       </button>
@@ -151,6 +154,22 @@
       <button class="btn btn-ghost" id="set-cancel">Cancel</button>
       <button class="btn btn-primary" id="set-save">Save</button>
     </div>
+  </div>
+</div>
+
+<!-- Calendar -->
+<div class="overlay" id="calendar" hidden>
+  <div class="contacts-card">
+    <div class="contacts-head">
+      <h2>Calendar</h2>
+      <button class="iconbtn" id="calendar-close" title="Close">✕</button>
+    </div>
+    <form id="event-form" class="contact-add">
+      <input id="event-title" type="text" placeholder="Event title" required />
+      <input id="event-when" type="datetime-local" />
+      <button class="btn btn-primary" type="submit">Add</button>
+    </form>
+    <div class="contacts-list" id="calendar-list"></div>
   </div>
 </div>
 
