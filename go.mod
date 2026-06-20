@@ -11,3 +11,5 @@ require (
 )
 
 require golang.org/x/crypto v0.31.0
+
+require blitiri.com.ar/go/spf v1.5.1

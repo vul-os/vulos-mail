@@ -2,6 +2,7 @@ package smtpin_test
 
 import (
 	"context"
+	"net"
 	"strings"
 	"testing"
 
@@ -66,7 +67,7 @@ func TestMXPrependsAuthResults(t *testing.T) {
 	var delivered string
 	be := &smtpin.Backend{
 		Deliver:    func(_ context.Context, _ string, raw []byte) error { delivered = string(raw); return nil },
-		Verify:     func([]byte) string { return "dkim=pass header.d=vmail.test" },
+		Verify:     func([]byte, net.IP, string, string) string { return "dkim=pass header.d=vmail.test" },
 		AuthServID: "mx.vmail.test",
 	}
 	sess, _ := be.NewSession(nil)

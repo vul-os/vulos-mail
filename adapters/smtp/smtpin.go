@@ -7,6 +7,7 @@ package smtpin
 import (
 	"context"
 	"io"
+	"net"
 	"time"
 
 	gosmtp "github.com/emersion/go-smtp"
@@ -19,22 +20,24 @@ type DeliverFunc func(ctx context.Context, rcpt string, raw []byte) error
 // Backend implements gosmtp.Backend.
 type Backend struct {
 	Deliver DeliverFunc
-	// Verify, if set, authenticates a received message (e.g. DKIM) and returns an
-	// Authentication-Results header value; it is prepended before delivery.
-	Verify func(raw []byte) string
+	// Verify, if set, authenticates a received message (SPF/DKIM/DMARC) given the
+	// connecting IP, HELO name, and MAIL FROM, returning an Authentication-Results
+	// header value that is prepended before delivery.
+	Verify func(raw []byte, ip net.IP, helo, mailFrom string) string
 	// AuthServID is the authserv-id placed in the Authentication-Results header
 	// (typically this host's name).
 	AuthServID string
 }
 
 // NewSession starts a new SMTP session.
-func (b *Backend) NewSession(_ *gosmtp.Conn) (gosmtp.Session, error) {
-	return &session{backend: b, deliver: b.Deliver}, nil
+func (b *Backend) NewSession(c *gosmtp.Conn) (gosmtp.Session, error) {
+	return &session{backend: b, deliver: b.Deliver, conn: c}, nil
 }
 
 type session struct {
 	backend *Backend
 	deliver DeliverFunc
+	conn    *gosmtp.Conn
 	from    string
 	rcpts   []string
 }
@@ -45,6 +48,26 @@ func (s *session) Logout() error { return nil }
 func (s *session) Mail(from string, _ *gosmtp.MailOptions) error {
 	s.from = from
 	return nil
+}
+
+func (s *session) helo() string {
+	if s.conn == nil {
+		return ""
+	}
+	return s.conn.Hostname()
+}
+
+func (s *session) remoteIP() net.IP {
+	if s.conn == nil || s.conn.Conn() == nil {
+		return nil
+	}
+	switch a := s.conn.Conn().RemoteAddr().(type) {
+	case *net.TCPAddr:
+		return a.IP
+	default:
+		host, _, _ := net.SplitHostPort(s.conn.Conn().RemoteAddr().String())
+		return net.ParseIP(host)
+	}
 }
 
 func (s *session) Rcpt(to string, _ *gosmtp.RcptOptions) error {
@@ -61,7 +84,7 @@ func (s *session) Data(r io.Reader) error {
 	// (filters, clients) can see them. Prepending a header at the start of the
 	// message is RFC-valid.
 	if s.backend != nil && s.backend.Verify != nil {
-		if ar := s.backend.Verify(raw); ar != "" {
+		if ar := s.backend.Verify(raw, s.remoteIP(), s.helo(), s.from); ar != "" {
 			servID := s.backend.AuthServID
 			if servID == "" {
 				servID = "vmail"

@@ -18,7 +18,7 @@ import (
 	"github.com/vul-os/vmail/internal/abuse"
 	"github.com/vul-os/vmail/internal/account"
 	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/dkim"
+	"github.com/vul-os/vmail/internal/emailauth"
 	"github.com/vul-os/vmail/internal/filter"
 	"github.com/vul-os/vmail/internal/scan"
 	"github.com/vul-os/vmail/internal/server"
@@ -81,15 +81,12 @@ func main() {
 	abuseFilter := abuse.New(abuse.Config{})
 
 	// Listeners.
+	authn := &emailauth.Authenticator{} // real DNS
 	mx := smtpin.NewServer(&smtpin.Backend{
 		Deliver:    mgr.Deliver,
 		AuthServID: domain,
-		Verify: func(raw []byte) string {
-			res, err := dkim.Verify(raw, nil) // nil => real DNS
-			if err != nil {
-				return ""
-			}
-			return dkim.AuthResults(res)
+		Verify: func(raw []byte, ip net.IP, helo, mailFrom string) string {
+			return authn.Verify(context.Background(), raw, ip, helo, mailFrom).AuthResults()
 		},
 	}, mxAddr, domain)
 	sub := smtpin.NewSubmitServer(&smtpin.SubmitBackend{Auth: mgr.AuthSubmit, Enqueue: mgr.Enqueue, Signer: mgr.Signer, Abuse: abuseFilter}, subAddr, domain)
