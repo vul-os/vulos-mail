@@ -111,7 +111,9 @@
       // preserve query order
       const byId = Object.fromEntries((g.list || []).map((m) => [m.id, m]));
       S.rows = ids.map((id) => byId[id]).filter(Boolean).map((m) => ({ id: m.id, msg: m }));
+      ml.classList.add("animate");
       renderList();
+      setTimeout(() => ml.classList.remove("animate"), 800);
     } catch (ex) { ml.innerHTML = ""; empty("Couldn't load: " + ex.message); }
   }
 
@@ -135,6 +137,7 @@
       const starred = kw(m, "$flagged");
       const li = el("li", "row" + (unread ? " unread" : "") + (m.id === S.openId ? " active" : ""));
       li.dataset.i = i;
+      li.style.animationDelay = Math.min(i, 14) * 24 + "ms";
       li.innerHTML =
         (unread ? '<span class="row-unreaddot"></span>' : "") +
         `<svg viewBox="0 0 24 24" class="star${starred ? " on" : ""}" data-star><path d="${STAR}"/></svg>` +

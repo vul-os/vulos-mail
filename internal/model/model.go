@@ -65,6 +65,7 @@ func SystemLabels() []Label {
 // Envelope is the parsed, protocol-free header summary of a message.
 type Envelope struct {
 	From            []string
+	FromName        string // display name of the first From address, if any
 	To              []string
 	Cc              []string
 	Subject         string

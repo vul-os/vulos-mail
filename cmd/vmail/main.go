@@ -140,7 +140,11 @@ func main() {
 		Deliver:    mgr.Deliver,
 		AuthServID: domain,
 		Verify: func(raw []byte, ip net.IP, helo, mailFrom string) string {
-			return authn.Verify(context.Background(), raw, ip, helo, mailFrom).AuthResults()
+			// Bound DNS-backed auth (SPF/DMARC) so a slow/dead resolver can never
+			// stall the delivery path.
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			return authn.Verify(ctx, raw, ip, helo, mailFrom).AuthResults()
 		},
 	}, mxAddr, domain)
 	mx.TLSConfig = tlsCfg

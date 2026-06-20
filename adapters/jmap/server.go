@@ -278,7 +278,7 @@ func emailObject(m *model.Message) map[string]any {
 		"size":       m.Size,
 		"receivedAt": m.Envelope.Date.UTC().Format("2006-01-02T15:04:05Z"),
 		"subject":    m.Envelope.Subject,
-		"from":       addrObjs(m.Envelope.From),
+		"from":       fromObjs(m.Envelope),
 		"to":         addrObjs(m.Envelope.To),
 		"cc":         addrObjs(m.Envelope.Cc),
 		"messageId":  []string{m.Envelope.MessageIDHeader},
@@ -307,6 +307,19 @@ func addBody(rt *account.Runtime, m *model.Message, obj map[string]any) {
 }
 
 func collapseWS(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// fromObjs builds the From list, attaching the display name to the first address.
+func fromObjs(env model.Envelope) []map[string]any {
+	out := make([]map[string]any, 0, len(env.From))
+	for i, a := range env.From {
+		o := map[string]any{"email": a}
+		if i == 0 && env.FromName != "" {
+			o["name"] = env.FromName
+		}
+		out = append(out, o)
+	}
+	return out
+}
 
 func addrObjs(addrs []string) []map[string]any {
 	out := make([]map[string]any, 0, len(addrs))

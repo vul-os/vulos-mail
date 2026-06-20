@@ -161,6 +161,8 @@ kbd{
 .row-unreaddot{position:absolute;left:5px;top:50%;width:6px;height:6px;border-radius:50%;
   background:var(--brand);transform:translateY(-50%);box-shadow:0 0 8px var(--brand)}
 
+.msglist.animate .row{animation:rowin .34s var(--ease) both}
+@keyframes rowin{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
 .list-empty{display:grid;place-items:center;flex:1;color:var(--text-faint);font-size:13px;text-align:center;padding:40px;gap:8px}
 
 /* ── Read pane ── */

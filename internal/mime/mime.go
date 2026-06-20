@@ -30,6 +30,9 @@ func ParseEnvelope(raw []byte) (model.Envelope, error) {
 	if d, err := h.Date(); err == nil {
 		env.Date = d.UTC()
 	}
+	if fal, err := h.AddressList("From"); err == nil && len(fal) > 0 {
+		env.FromName = fal[0].Name
+	}
 	if mid, err := h.MessageID(); err == nil {
 		env.MessageIDHeader = mid
 	}
