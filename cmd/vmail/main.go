@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"log"
 	"net"
@@ -24,11 +25,14 @@ import (
 	"github.com/vul-os/vmail/internal/abuse"
 	"github.com/vul-os/vmail/internal/account"
 	"github.com/vul-os/vmail/internal/blob"
+	"github.com/vul-os/vmail/internal/compose"
 	"github.com/vul-os/vmail/internal/emailauth"
 	"github.com/vul-os/vmail/internal/eventlog"
 	"github.com/vul-os/vmail/internal/filter"
 	"github.com/vul-os/vmail/internal/mailsettings"
 	"github.com/vul-os/vmail/internal/metrics"
+	"github.com/vul-os/vmail/internal/mime"
+	"github.com/vul-os/vmail/internal/model"
 	"github.com/vul-os/vmail/internal/scan"
 	"github.com/vul-os/vmail/internal/server"
 	"github.com/vul-os/vmail/internal/tenant"
@@ -193,21 +197,79 @@ func main() {
 			return
 		}
 		var req struct {
-			To      []string `json:"to"`
-			Subject string   `json:"subject"`
-			Text    string   `json:"text"`
+			To          []string `json:"to"`
+			Cc          []string `json:"cc"`
+			Subject     string   `json:"subject"`
+			Text        string   `json:"text"`
+			HTML        string   `json:"html"`
+			Attachments []struct {
+				Name string `json:"name"`
+				Type string `json:"type"`
+				Data string `json:"data"` // base64
+			} `json:"attachments"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.To) == 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.To)+len(req.Cc) == 0 {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		if err := mgr.WebSend(r.Context(), u, req.To, req.Subject, req.Text); err != nil {
+		var atts []compose.Attachment
+		for _, a := range req.Attachments {
+			data, derr := base64.StdEncoding.DecodeString(a.Data)
+			if derr != nil {
+				http.Error(w, "bad attachment encoding", http.StatusBadRequest)
+				return
+			}
+			atts = append(atts, compose.Attachment{Name: a.Name, Type: a.Type, Data: data})
+		}
+		if err := mgr.WebSendMsg(r.Context(), u, req.To, req.Cc, req.Subject, req.Text, req.HTML, atts); err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
+	// Attachment download from a received message: ?id=<msgID>&n=<index>.
+	httpMux.HandleFunc("/api/webmail/attachment", func(w http.ResponseWriter, r *http.Request) {
+		u, p, ok := r.BasicAuth()
+		if !ok {
+			w.Header().Set("WWW-Authenticate", `Basic realm="vmail"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		rt, err := mgr.AuthIMAP(u, p)
+		if err != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		msg, ok := rt.Message(model.ID(r.URL.Query().Get("id")))
+		if !ok {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		raw, err := rt.Body(r.Context(), msg.BlobRef)
+		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		n, _ := strconv.Atoi(r.URL.Query().Get("n"))
+		a, ok := mime.AttachmentAt(raw, n)
+		if !ok {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		ct := a.Type
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		w.Header().Set("Content-Type", ct)
+		name := a.Name
+		if name == "" {
+			name = "attachment"
+		}
+		w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
+		_, _ = w.Write(a.Data)
+	})
+
 	// Webmail settings (signature + vacation), Basic auth.
 	httpMux.HandleFunc("/api/webmail/settings", func(w http.ResponseWriter, r *http.Request) {
 		u, p, ok := r.BasicAuth()

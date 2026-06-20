@@ -76,11 +76,11 @@ func (b *Backend) session(w http.ResponseWriter, _ *http.Request, _ *account.Run
 		"primaryAccounts": map[string]any{
 			"urn:ietf:params:jmap:mail": accountID,
 		},
-		"apiUrl":       "/jmap/api",
-		"downloadUrl":  "/jmap/download/{accountId}/{blobId}",
-		"uploadUrl":    "/jmap/upload/{accountId}",
+		"apiUrl":         "/jmap/api",
+		"downloadUrl":    "/jmap/download/{accountId}/{blobId}",
+		"uploadUrl":      "/jmap/upload/{accountId}",
 		"eventSourceUrl": "/jmap/eventsource",
-		"state":        "0",
+		"state":          "0",
 	})
 }
 
@@ -174,12 +174,12 @@ func mailboxGet(rt *account.Runtime, accountID string) methodResult {
 			}
 		}
 		list = append(list, map[string]any{
-			"id":            string(l.ID),
-			"name":          l.Name,
-			"role":          mailboxRole(l.ID),
-			"totalEmails":   len(msgs),
-			"unreadEmails":  unread,
-			"myRights":      map[string]bool{"mayReadItems": true, "mayAddItems": true, "maySetKeywords": true},
+			"id":           string(l.ID),
+			"name":         l.Name,
+			"role":         mailboxRole(l.ID),
+			"totalEmails":  len(msgs),
+			"unreadEmails": unread,
+			"myRights":     map[string]bool{"mayReadItems": true, "mayAddItems": true, "maySetKeywords": true},
 		})
 	}
 	return methodResult{name: "Mailbox/get", body: map[string]any{
@@ -245,7 +245,7 @@ func emailGet(rt *account.Runtime, accountID string, args json.RawMessage) metho
 	// (it requires fetching + parsing the blob).
 	wantBody := len(a.Properties) == 0
 	for _, p := range a.Properties {
-		if p == "preview" || p == "bodyValues" || p == "textBody" {
+		if p == "preview" || p == "bodyValues" || p == "textBody" || p == "attachments" {
 			wantBody = true
 		}
 	}
@@ -304,6 +304,13 @@ func addBody(rt *account.Runtime, m *model.Message, obj map[string]any) {
 	obj["preview"] = collapseWS(preview)
 	obj["bodyValues"] = map[string]any{"1": map[string]any{"value": text, "isTruncated": false}}
 	obj["textBody"] = []any{map[string]any{"partId": "1", "type": "text/plain"}}
+	if atts := mime.Attachments(raw); len(atts) > 0 {
+		arr := make([]any, 0, len(atts))
+		for i, a := range atts {
+			arr = append(arr, map[string]any{"partId": i, "name": a.Name, "type": a.Type, "size": len(a.Data)})
+		}
+		obj["attachments"] = arr
+	}
 }
 
 func collapseWS(s string) string { return strings.Join(strings.Fields(s), " ") }

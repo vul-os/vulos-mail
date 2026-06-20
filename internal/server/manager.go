@@ -11,17 +11,16 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/vul-os/vmail/internal/account"
 	"github.com/vul-os/vmail/internal/blob"
+	"github.com/vul-os/vmail/internal/compose"
 	"github.com/vul-os/vmail/internal/dkim"
 	"github.com/vul-os/vmail/internal/dsn"
 	"github.com/vul-os/vmail/internal/eventlog"
@@ -247,28 +246,29 @@ func (m *Manager) SetSettings(account string, s mailsettings.Settings) {
 	}
 }
 
-// WebSend composes a plain-text message from the authenticated account, stores a
-// Sent copy, and sends it (DKIM-signed) — the webmail compose path.
+// WebSend sends a plain-text message (back-compat wrapper around WebSendMsg).
 func (m *Manager) WebSend(ctx context.Context, account string, to []string, subject, text string) error {
-	if len(to) == 0 {
+	return m.WebSendMsg(ctx, account, to, nil, subject, text, "", nil)
+}
+
+// WebSendMsg composes a message (text + optional HTML + attachments) from the
+// authenticated account, stores a Sent copy, DKIM-signs, and sends it — the
+// webmail compose path.
+func (m *Manager) WebSendMsg(ctx context.Context, account string, to, cc []string, subject, text, html string, atts []compose.Attachment) error {
+	if len(to)+len(cc) == 0 {
 		return errors.New("no recipients")
 	}
-	msgID := m.gen.New() + "@" + tenantOf(account)
-	var b strings.Builder
-	fmt.Fprintf(&b, "From: %s\r\n", account)
-	fmt.Fprintf(&b, "To: %s\r\n", strings.Join(to, ", "))
-	fmt.Fprintf(&b, "Subject: %s\r\n", subject)
-	fmt.Fprintf(&b, "Date: %s\r\n", time.Now().UTC().Format(time.RFC1123Z))
-	fmt.Fprintf(&b, "Message-ID: <%s>\r\n", msgID)
-	b.WriteString("MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n")
-	b.WriteString(text)
-	b.WriteString("\r\n")
-	raw := []byte(b.String())
-
+	raw, err := compose.Build(compose.Message{
+		From: account, To: to, Cc: cc, Subject: subject, Text: text, HTML: html,
+		MessageID: m.gen.New() + "@" + tenantOf(account), Attachments: atts,
+	})
+	if err != nil {
+		return err
+	}
 	if rt, err := m.account(ctx, account); err == nil {
 		_, _ = rt.Ingest(ctx, raw, []model.LabelID{model.LabelSent}, []model.Flag{model.FlagSeen})
 	}
-	return m.SendRaw(ctx, account, to, raw)
+	return m.SendRaw(ctx, account, append(append([]string{}, to...), cc...), raw)
 }
 
 // SendRaw accepts a fully-composed message for outbound delivery (used by the

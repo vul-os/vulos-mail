@@ -65,6 +65,13 @@
       return r.json();
     }
 
+    // Authenticated binary fetch (e.g. attachment download) -> Blob.
+    async download(path) {
+      const r = await fetch(this.base + path, { headers: this._headers() });
+      if (!r.ok) throw new Error("Download failed (" + r.status + ")");
+      return r.blob();
+    }
+
     // Compose+send via the authenticated webmail endpoint.
     async send(msg) {
       const r = await fetch(this.base + "/api/webmail/send", {

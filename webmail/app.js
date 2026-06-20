@@ -286,6 +286,7 @@
           <div class="msg-date">${fmtFull(m.receivedAt)}</div>
         </div>
         <div class="msg-body">${linkify(esc(body))}</div>
+        ${attsHTML(m.attachments)}
       </div>`;
     $("#read [data-act=back]").onclick = backToList;
     $("#read [data-act=archive]").onclick = () => { archive(row); };
@@ -293,6 +294,23 @@
     $("#read [data-act=star]").onclick = () => toggleStar(row);
     $("#read [data-act=unread]").onclick = () => { markSeen(row, false); backToList(); };
     $("#read [data-act=reply]").onclick = () => replyTo(row);
+    $$("#read [data-att]").forEach((e) => {
+      const i = +e.dataset.att;
+      e.onclick = () => downloadAtt(row.id, i, (m.attachments[i] || {}).name);
+    });
+  }
+  function attsHTML(atts) {
+    if (!atts || !atts.length) return "";
+    return `<div class="read-atts">` + atts.map((a, i) =>
+      `<div class="read-att" data-att="${i}"><svg viewBox="0 0 24 24" class="ic"><path d="M21 11.5 12.5 20a4 4 0 0 1-6-6l8-8a2.5 2.5 0 0 1 4 4l-8 8a1 1 0 0 1-1.5-1.5L17 11"/></svg><span class="nm">${esc(a.name || "attachment")}</span><span class="sz">${fmtBytes(a.size)}</span></div>`).join("") + `</div>`;
+  }
+  async function downloadAtt(id, n, name) {
+    try {
+      const blob = await jmap.download(`/api/webmail/attachment?id=${encodeURIComponent(id)}&n=${n}`);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = name || "attachment"; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    } catch (ex) { toast(ex.message); }
   }
   const actBtn = (act, title, path, cls = "") =>
     `<button class="iconbtn ${cls}" data-act="${act}" title="${title}"><svg viewBox="0 0 24 24" class="ic"><path d="${path}"/></svg></button>`;
@@ -336,14 +354,49 @@
   function openCompose(pre = {}) {
     const node = $("#compose-tpl").content.firstElementChild.cloneNode(true);
     $("#compose-dock").appendChild(node);
+    const rich = node.querySelector(".c-rich");
+    const atts = []; // {name,type,data(base64),size}
     if (pre.to) node.querySelector(".c-to").value = pre.to;
     if (pre.subject) node.querySelector(".c-subj").value = pre.subject;
     const sig = S.settings && S.settings.signature ? "\n\n" + S.settings.signature : "";
-    node.querySelector(".c-text").value = (pre.text || "") + sig;
+    rich.innerText = (pre.text || "") + sig;
+
     const head = node.querySelector(".compose-head");
     head.onclick = (e) => { if (e.target.closest(".close,.min")) return; node.classList.toggle("min"); };
     node.querySelector(".close").onclick = () => node.remove();
     node.querySelector(".min").onclick = () => node.classList.toggle("min");
+
+    // formatting toolbar
+    node.querySelectorAll(".ctool[data-fmt]").forEach((b) => b.addEventListener("mousedown", (e) => {
+      e.preventDefault(); rich.focus(); document.execCommand(b.dataset.fmt, false, null);
+    }));
+    node.querySelector("[data-link]").addEventListener("mousedown", (e) => {
+      e.preventDefault(); rich.focus();
+      const url = prompt("Link URL:", "https://");
+      if (url) document.execCommand("createLink", false, url);
+    });
+
+    // attachments
+    const file = node.querySelector(".c-file");
+    node.querySelector("[data-attach]").onclick = () => file.click();
+    file.addEventListener("change", async () => {
+      for (const f of file.files) {
+        const data = await readBase64(f);
+        atts.push({ name: f.name, type: f.type || "application/octet-stream", data, size: f.size });
+      }
+      file.value = ""; renderAtts();
+    });
+    function renderAtts() {
+      const box = node.querySelector(".c-atts"); box.innerHTML = "";
+      atts.forEach((a, i) => {
+        const chip = el("span", "att-chip",
+          `<svg viewBox="0 0 24 24" class="ic"><path d="M21 11.5 12.5 20a4 4 0 0 1-6-6l8-8a2.5 2.5 0 0 1 4 4l-8 8a1 1 0 0 1-1.5-1.5L17 11"/></svg>` +
+          `<span class="nm">${esc(a.name)}</span><span class="sz">${fmtBytes(a.size)}</span><span class="rm">✕</span>`);
+        chip.querySelector(".rm").onclick = () => { atts.splice(i, 1); renderAtts(); };
+        box.appendChild(chip);
+      });
+    }
+
     const send = node.querySelector(".c-send");
     const doSend = async () => {
       const to = node.querySelector(".c-to").value.trim();
@@ -353,14 +406,16 @@
         await jmap.send({
           to: to.split(",").map((s) => s.trim()).filter(Boolean),
           subject: node.querySelector(".c-subj").value,
-          text: node.querySelector(".c-text").value,
+          text: rich.innerText,
+          html: rich.innerHTML.trim() ? rich.innerHTML : "",
+          attachments: atts.map((a) => ({ name: a.name, type: a.type, data: a.data })),
         });
         node.remove(); toast("Sent");
       } catch (ex) { node.querySelector(".c-status").textContent = ex.message; send.disabled = false; }
     };
     send.onclick = doSend;
-    node.querySelector(".c-text").addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") doSend(); });
-    (pre.to ? node.querySelector(".c-text") : node.querySelector(".c-to")).focus();
+    rich.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") doSend(); });
+    (pre.to ? rich : node.querySelector(".c-to")).focus();
     return node;
   }
   function replyTo(row) {
@@ -369,6 +424,13 @@
       to: fromAddr(m),
       subject: /^re:/i.test(m.subject || "") ? m.subject : "Re: " + (m.subject || ""),
       text: "\n\n———\nOn " + fmtFull(m.receivedAt) + ", " + fromName(m) + " wrote:\n> " + (bodyText(m).split("\n").join("\n> ")),
+    });
+  }
+  function readBase64(file) {
+    return new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result).split(",")[1] || "");
+      r.onerror = rej; r.readAsDataURL(file);
     });
   }
 
@@ -509,6 +571,7 @@
     return d.toLocaleDateString([], { year: "2-digit", month: "short", day: "numeric" });
   }
   function fmtFull(iso) { return iso ? new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""; }
+  function fmtBytes(n) { if (!n) return ""; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(0) + " KB"; return (n / 1048576).toFixed(1) + " MB"; }
   let toastT;
   function toast(t, undoFn) {
     const e = $("#toast");

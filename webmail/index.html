@@ -105,10 +105,19 @@
     <div class="compose-body">
       <label class="crow"><span>To</span><input class="c-to" type="text" placeholder="recipient@domain" /></label>
       <label class="crow"><span>Subject</span><input class="c-subj" type="text" placeholder="Subject" /></label>
-      <textarea class="c-text" placeholder="Write something…"></textarea>
+      <div class="c-rich" contenteditable="true" data-ph="Write something…"></div>
+      <div class="c-atts"></div>
     </div>
     <footer class="compose-foot">
       <button class="btn btn-primary c-send">Send <kbd>⌘↵</kbd></button>
+      <div class="c-tools">
+        <button class="ctool" data-fmt="bold" title="Bold (⌘B)"><b>B</b></button>
+        <button class="ctool" data-fmt="italic" title="Italic (⌘I)"><i>I</i></button>
+        <button class="ctool" data-fmt="insertUnorderedList" title="Bulleted list">≔</button>
+        <button class="ctool" data-link title="Insert link"><svg viewBox="0 0 24 24" class="ic"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg></button>
+        <button class="ctool" data-attach title="Attach files"><svg viewBox="0 0 24 24" class="ic"><path d="M21 11.5 12.5 20a4 4 0 0 1-6-6l8-8a2.5 2.5 0 0 1 4 4l-8 8a1 1 0 0 1-1.5-1.5L17 11"/></svg></button>
+        <input type="file" class="c-file" multiple hidden />
+      </div>
       <span class="c-status"></span>
     </footer>
   </div>
