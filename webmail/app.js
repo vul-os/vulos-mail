@@ -12,6 +12,7 @@
     sel: -1,         // index in rows
     openId: null,
     filter: "",
+    selected: new Set(),
   };
 
   const SYS_ICONS = {
@@ -90,6 +91,7 @@
 
   async function selectLabel(id, name) {
     S.current = id; S.currentName = name; S.sel = -1; S.openId = null; S.filter = "";
+    S.selected.clear(); renderSelbar();
     $("#search").value = "";
     $("#list-title").textContent = name;
     $("#app").classList.remove("reading");
@@ -135,23 +137,77 @@
       const m = row.msg;
       const unread = !kw(m, "$seen");
       const starred = kw(m, "$flagged");
-      const li = el("li", "row" + (unread ? " unread" : "") + (m.id === S.openId ? " active" : ""));
-      li.dataset.i = i;
+      const picked = S.selected.has(row.id);
+      const li = el("li", "row" + (unread ? " unread" : "") + (m.id === S.openId ? " active" : "") + (picked ? " picked" : ""));
+      li.dataset.i = i; li.dataset.id = row.id;
       li.style.animationDelay = Math.min(i, 14) * 24 + "ms";
       li.innerHTML =
         (unread ? '<span class="row-unreaddot"></span>' : "") +
+        `<span class="pick" data-pick><svg viewBox="0 0 24 24" class="ic" style="width:12px;height:12px;stroke-width:2.6"><path d="M20 6 9 17l-5-5"/></svg></span>` +
         `<svg viewBox="0 0 24 24" class="star${starred ? " on" : ""}" data-star><path d="${STAR}"/></svg>` +
         `<div class="row-main">
            <div class="row-top"><span class="row-from">${esc(fromName(m))}</span><span class="row-date">${fmtDate(m.receivedAt)}</span></div>
            <div class="row-subj">${esc(m.subject || "(no subject)")}</div>
            <div class="row-snip">${esc(m.preview || "")}</div>
          </div>`;
-      li.onclick = (e) => { if (e.target.closest("[data-star]")) { toggleStar(row); e.stopPropagation(); return; } openRow(i); };
+      li.onclick = (e) => {
+        if (e.target.closest("[data-star]")) { toggleStar(row); e.stopPropagation(); return; }
+        if (e.target.closest("[data-pick]")) { toggleSel(row); e.stopPropagation(); return; }
+        openRow(i);
+      };
       ml.appendChild(li);
     });
   }
 
   function empty(t) { const e = $("#list-empty"); e.textContent = t; e.hidden = false; }
+
+  // ── multi-select ──────────────────────────────────────────────────
+  function toggleSel(row) {
+    if (S.selected.has(row.id)) S.selected.delete(row.id); else S.selected.add(row.id);
+    const li = $(`.row[data-id="${cssId(row.id)}"]`);
+    if (li) li.classList.toggle("picked", S.selected.has(row.id));
+    renderSelbar();
+  }
+  function clearSel() { S.selected.clear(); renderSelbar(); $$(".row.picked").forEach((r) => r.classList.remove("picked")); }
+  function selRows() { return S.rows.filter((r) => S.selected.has(r.id)); }
+  function renderSelbar() {
+    let bar = $("#selbar");
+    if (S.selected.size === 0) { if (bar) bar.remove(); return; }
+    if (!bar) { bar = el("div", "selbar"); bar.id = "selbar"; $("#list-pane").insertBefore(bar, $("#msglist")); }
+    bar.innerHTML =
+      `<span class="selcount"><b>${S.selected.size}</b> selected</span>` +
+      selAct("read", "Mark read", '<path d="M22 6 12 13 2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/>') +
+      selAct("star", "Star", STAR) +
+      selAct("archive", "Archive", SYS_ICONS.archive) +
+      selAct("trash", "Delete", SYS_ICONS.trash) +
+      selAct("clear", "Clear", '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
+    bar.querySelector("[data-s=read]").onclick = () => bulk("read");
+    bar.querySelector("[data-s=star]").onclick = () => bulk("star");
+    bar.querySelector("[data-s=archive]").onclick = () => bulk("archive");
+    bar.querySelector("[data-s=trash]").onclick = () => bulk("trash");
+    bar.querySelector("[data-s=clear]").onclick = clearSel;
+  }
+  const selAct = (s, t, p) => `<button class="iconbtn" data-s="${s}" title="${t}"><svg viewBox="0 0 24 24" class="ic"><path d="${p}"/></svg></button>`;
+
+  async function bulk(kind) {
+    const rows = selRows(); if (!rows.length) return;
+    const ids = rows.map((r) => r.id);
+    if (kind === "read") { rows.forEach((r) => { setKw(r.msg, "$seen", true); }); await setMany(ids, { "keywords/$seen": true }); clearSel(); renderList(); bumpUnread(); return; }
+    if (kind === "star") { rows.forEach((r) => setKw(r.msg, "$flagged", true)); await setMany(ids, { "keywords/$flagged": true }); clearSel(); renderList(); toast(ids.length + " starred"); return; }
+    if (kind === "archive") {
+      rows.forEach((r) => removeRowQuiet(r)); clearSel(); renderList();
+      await setMany(ids, { "mailboxIds/inbox": null });
+      toast(ids.length + " archived", async () => { await setMany(ids, { "mailboxIds/inbox": true }); loadList(); });
+    }
+    if (kind === "trash") {
+      rows.forEach((r) => removeRowQuiet(r)); clearSel(); renderList();
+      await setMany(ids, { "mailboxIds/inbox": null, "mailboxIds/trash": true });
+      toast(ids.length + " deleted", async () => { await setMany(ids, { "mailboxIds/inbox": true, "mailboxIds/trash": null }); loadList(); });
+    }
+  }
+  function removeRowQuiet(row) { S.rows = S.rows.filter((r) => r.id !== row.id); if (S.openId === row.id) backToList(); }
+  async function setMany(ids, patch) { const u = {}; ids.forEach((id) => (u[id] = patch)); try { await jmap.set(u); } catch {} }
+  function cssId(id) { return String(id).replace(/"/g, '\\"'); }
 
   // ── open / read ───────────────────────────────────────────────────
   async function openRow(i) {
@@ -290,14 +346,19 @@
   const SHORTCUTS = [
     ["c", "Compose"], ["/", "Search"], ["j / k", "Next / previous"], ["Enter", "Open"],
     ["u", "Back to list"], ["e", "Archive"], ["#", "Delete"], ["s", "Star"],
-    ["r", "Reply"], ["g i", "Go to Inbox"], ["?", "This help"], ["Esc", "Close"],
+    ["r", "Reply"], ["g i", "Go to Inbox"], ["x", "Select"], ["⌘ K", "Command palette"],
+    ["?", "This help"], ["Esc", "Close"],
   ];
   let gPending = false;
   document.addEventListener("keydown", (e) => {
     if ($("#login").hidden === false) return;
-    const typing = /^(input|textarea)$/i.test(e.target.tagName);
+    // Command palette: works everywhere, even while typing.
+    if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); openCmdk(); return; }
+    if (!$("#cmdk").hidden) { cmdkKey(e); return; }
+    const typing = /^(input|textarea)$/i.test(e.target.tagName) || e.target.isContentEditable;
     if (typing) { if (e.key === "Escape") e.target.blur(); return; }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === "x") { if (S.sel < 0) { S.sel = 0; highlightRow(); } const r = visibleRows()[S.sel]; if (r) { toggleSel(r); move(1); } return; }
     const rows = visibleRows();
     if (gPending) { gPending = false; if (e.key === "i") selectLabel("inbox", "Inbox"); return; }
     switch (e.key) {
@@ -342,6 +403,49 @@
   $("#sc-close").onclick = () => toggleShortcuts(false);
   $("#shortcuts").onclick = (e) => { if (e.target.id === "shortcuts") toggleShortcuts(false); };
 
+  // ── command palette (⌘K) ──────────────────────────────────────────
+  let cmdkIdx = 0, cmdkCmds = [];
+  function commands() {
+    const c = [
+      { label: "Compose new message", k: "c", ic: '<path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="m13.5 6.5 3 3"/>', run: () => openCompose() },
+      { label: "Search mail", k: "/", ic: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>', run: () => $("#search").focus() },
+      { label: "Refresh", ic: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>', run: () => $("#refresh").click() },
+      { label: "Mark all as read", ic: SYS_ICONS.inbox, run: markAllRead },
+      { label: "Keyboard shortcuts", k: "?", ic: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4"/><path d="M12 17h.01"/>', run: () => toggleShortcuts(true) },
+      { label: "Sign out", ic: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>', run: () => $("#logout").click() },
+    ];
+    for (const m of S.labels) c.push({ label: "Go to " + m.name, ic: SYS_ICONS[m.role || m.id] || SYS_ICONS._, run: () => selectLabel(m.id, m.name) });
+    return c;
+  }
+  function openCmdk() { const o = $("#cmdk"); o.hidden = false; const inp = $("#cmdk-in"); inp.value = ""; cmdkIdx = 0; renderCmdk(""); inp.focus(); }
+  function closeCmdk() { $("#cmdk").hidden = true; }
+  function renderCmdk(f) {
+    const all = commands(); const ff = f.trim().toLowerCase();
+    cmdkCmds = ff ? all.filter((c) => c.label.toLowerCase().includes(ff)) : all;
+    cmdkIdx = Math.max(0, Math.min(cmdkIdx, cmdkCmds.length - 1));
+    const list = $("#cmdk-list");
+    list.innerHTML = cmdkCmds.length
+      ? cmdkCmds.map((c, i) => `<div class="cmdk-item${i === cmdkIdx ? " on" : ""}" data-i="${i}"><svg viewBox="0 0 24 24" class="ic">${c.ic}</svg><span>${esc(c.label)}</span>${c.k ? `<span class="k">${c.k}</span>` : ""}</div>`).join("")
+      : '<div class="cmdk-empty">No matching commands</div>';
+    $$("#cmdk-list .cmdk-item").forEach((e) => (e.onclick = () => runCmdk(+e.dataset.i)));
+  }
+  function runCmdk(i) { const c = cmdkCmds[i]; closeCmdk(); if (c) setTimeout(c.run, 0); }
+  function cmdkKey(e) {
+    if (e.key === "Escape") { e.preventDefault(); closeCmdk(); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); cmdkIdx = Math.min(cmdkIdx + 1, cmdkCmds.length - 1); renderCmdk($("#cmdk-in").value); scrollCmdk(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); cmdkIdx = Math.max(cmdkIdx - 1, 0); renderCmdk($("#cmdk-in").value); scrollCmdk(); }
+    else if (e.key === "Enter") { e.preventDefault(); runCmdk(cmdkIdx); }
+  }
+  function scrollCmdk() { const e = $("#cmdk-list .cmdk-item.on"); if (e) e.scrollIntoView({ block: "nearest" }); }
+  $("#cmdk-in").addEventListener("input", (e) => { cmdkIdx = 0; renderCmdk(e.target.value); });
+  $("#cmdk").addEventListener("click", (e) => { if (e.target.id === "cmdk") closeCmdk(); });
+  async function markAllRead() {
+    const ids = S.rows.filter((r) => !kw(r.msg, "$seen")).map((r) => r.id);
+    if (!ids.length) { toast("Nothing unread"); return; }
+    S.rows.forEach((r) => setKw(r.msg, "$seen", true)); renderList();
+    await setMany(ids, { "keywords/$seen": true }); bumpUnread(); toast("Marked " + ids.length + " read");
+  }
+
   // ── helpers ───────────────────────────────────────────────────────
   const STAR = "m12 3 2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 18l-5.9 3 1.2-6.5L2.5 9.9 9 9z";
   function kw(m, k) { return !!(m.keywords && m.keywords[k]); }
@@ -375,7 +479,14 @@
   }
   function fmtFull(iso) { return iso ? new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""; }
   let toastT;
-  function toast(t) { const e = $("#toast"); e.textContent = t; e.hidden = false; requestAnimationFrame(() => e.classList.add("show")); clearTimeout(toastT); toastT = setTimeout(() => { e.classList.remove("show"); setTimeout(() => (e.hidden = true), 300); }, 2200); }
+  function toast(t, undoFn) {
+    const e = $("#toast");
+    e.innerHTML = esc(t) + (undoFn ? '<span class="undo">Undo</span>' : "");
+    e.hidden = false; requestAnimationFrame(() => e.classList.add("show"));
+    if (undoFn) e.querySelector(".undo").onclick = () => { undoFn(); hideToast(); };
+    clearTimeout(toastT); toastT = setTimeout(hideToast, undoFn ? 5500 : 2200);
+  }
+  function hideToast() { const e = $("#toast"); e.classList.remove("show"); setTimeout(() => (e.hidden = true), 300); }
 
   boot();
 })();
