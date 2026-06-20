@@ -22,6 +22,7 @@ import (
 	"github.com/vul-os/vmail/internal/emailauth"
 	"github.com/vul-os/vmail/internal/filter"
 	"github.com/vul-os/vmail/internal/mailsettings"
+	"github.com/vul-os/vmail/internal/metrics"
 	"github.com/vul-os/vmail/internal/scan"
 	"github.com/vul-os/vmail/internal/server"
 	"github.com/vul-os/vmail/internal/tenant"
@@ -123,14 +124,27 @@ func main() {
 	})
 	go serve("jmap", jmapddr, func() error { return http.ListenAndServe(jmapddr, jmapBe.Handler()) })
 
-	// Outbound scheduler loop.
+	// Outbound scheduler loop (+ metrics).
 	go func() {
 		ctx := context.Background()
 		for {
-			sched.Tick(ctx, time.Now())
+			st := sched.Tick(ctx, time.Now())
+			metrics.Outbound.WithLabelValues("delivered").Add(float64(st.Delivered))
+			metrics.Outbound.WithLabelValues("deferred").Add(float64(st.Deferred))
+			metrics.Outbound.WithLabelValues("bounced").Add(float64(st.Bounced))
+			metrics.QueueDepth.Set(float64(sched.Pending()))
 			time.Sleep(5 * time.Second)
 		}
 	}()
+
+	// Metrics endpoint.
+	if metricsAddr := env("VMAIL_METRICS_ADDR", ":2090"); metricsAddr != "" {
+		go serve("metrics", metricsAddr, func() error {
+			mux := http.NewServeMux()
+			mux.Handle("/metrics", metrics.Handler())
+			return http.ListenAndServe(metricsAddr, mux)
+		})
+	}
 
 	log.Printf("vmail up: domain=%s mx=%s submit=%s imap=%s jmap=%s data=%s", domain, mxAddr, subAddr, imapddr, jmapddr, dataDir)
 	select {} // block forever

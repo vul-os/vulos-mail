@@ -26,6 +26,7 @@ import (
 	"github.com/vul-os/vmail/internal/filter"
 	"github.com/vul-os/vmail/internal/ids"
 	"github.com/vul-os/vmail/internal/mailsettings"
+	"github.com/vul-os/vmail/internal/metrics"
 	"github.com/vul-os/vmail/internal/mime"
 	"github.com/vul-os/vmail/internal/model"
 	"github.com/vul-os/vmail/internal/tenant"
@@ -131,6 +132,7 @@ func (m *Manager) Deliver(ctx context.Context, rcpt string, raw []byte) error {
 	if m.Inbound != nil {
 		switch v := m.Inbound.Scan(ctx, raw); v.Action {
 		case filter.Reject:
+			metrics.MessagesReceived.WithLabelValues("reject").Inc()
 			return errors.New("message rejected: " + v.Reason)
 		case filter.Junk:
 			label = model.LabelSpam
@@ -140,7 +142,10 @@ func (m *Manager) Deliver(ctx context.Context, rcpt string, raw []byte) error {
 		return err
 	}
 	if label == model.LabelInbox {
+		metrics.MessagesReceived.WithLabelValues("inbox").Inc()
 		m.maybeVacation(rcpt, raw)
+	} else {
+		metrics.MessagesReceived.WithLabelValues("spam").Inc()
 	}
 	return nil
 }
@@ -205,6 +210,7 @@ func (m *Manager) AuthSubmit(username, password string) (*account.Runtime, strin
 func (m *Manager) Enqueue(msg mtaout.OutMessage) {
 	if m.sched != nil {
 		m.sched.Enqueue(msg)
+		metrics.SubmissionsAccepted.Inc()
 	}
 }
 
