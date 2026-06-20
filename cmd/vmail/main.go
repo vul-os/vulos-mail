@@ -29,6 +29,7 @@ import (
 	"github.com/vul-os/vmail/internal/scan"
 	"github.com/vul-os/vmail/internal/server"
 	"github.com/vul-os/vmail/internal/tenant"
+	"github.com/vul-os/vmail/internal/tlsconf"
 	"github.com/vul-os/vmail/services/mtaout"
 )
 
@@ -54,6 +55,19 @@ func main() {
 	blobs, err := blob.NewFS(dataDir + "/blobs")
 	if err != nil {
 		log.Fatalf("blob store: %v", err)
+	}
+
+	// TLS: bring-your-own cert/key, or self-signed for dev (VMAIL_TLS_SELFSIGNED=1).
+	var selfSigned []string
+	if env("VMAIL_TLS_SELFSIGNED", "") != "" {
+		selfSigned = []string{domain, "localhost"}
+	}
+	tlsCfg, err := tlsconf.Config(env("VMAIL_TLS_CERT", ""), env("VMAIL_TLS_KEY", ""), selfSigned...)
+	if err != nil {
+		log.Fatalf("tls: %v", err)
+	}
+	if tlsCfg != nil {
+		log.Printf("TLS enabled (STARTTLS on SMTP/IMAP, HTTPS on API)")
 	}
 
 	// Outbound: warm-IP pool + reputation + scheduler over a real SMTP sender.
@@ -110,9 +124,11 @@ func main() {
 			return authn.Verify(context.Background(), raw, ip, helo, mailFrom).AuthResults()
 		},
 	}, mxAddr, domain)
+	mx.TLSConfig = tlsCfg
 	sub := smtpin.NewSubmitServer(&smtpin.SubmitBackend{Auth: mgr.AuthSubmit, Enqueue: mgr.Enqueue, Signer: mgr.Signer, Abuse: abuseFilter, Quota: mgr.CheckQuota}, subAddr, domain)
+	sub.TLSConfig = tlsCfg
 	imapBe := &imapadapter.Backend{Auth: func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) }}
-	imapSrv := imapadapter.NewServer(imapBe, nil)
+	imapSrv := imapadapter.NewServer(imapBe, tlsCfg)
 
 	jmapBe := &jmapadapter.Backend{Auth: func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) }}
 
@@ -147,7 +163,13 @@ func main() {
 		}
 		return imapSrv.Serve(ln)
 	})
-	go serve("http (jmap/dav/api)", jmapddr, func() error { return http.ListenAndServe(jmapddr, httpMux) })
+	go serve("http (jmap/dav/api)", jmapddr, func() error {
+		srv := &http.Server{Addr: jmapddr, Handler: httpMux, TLSConfig: tlsCfg}
+		if tlsCfg != nil {
+			return srv.ListenAndServeTLS("", "") // certs come from TLSConfig
+		}
+		return srv.ListenAndServe()
+	})
 
 	// Outbound scheduler loop (+ metrics).
 	go func() {
