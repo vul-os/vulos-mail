@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	imapadapter "github.com/vul-os/vmail/adapters/imap"
@@ -22,6 +23,7 @@ import (
 	"github.com/vul-os/vmail/internal/filter"
 	"github.com/vul-os/vmail/internal/scan"
 	"github.com/vul-os/vmail/internal/server"
+	"github.com/vul-os/vmail/internal/tenant"
 	"github.com/vul-os/vmail/services/mtaout"
 )
 
@@ -78,6 +80,15 @@ func main() {
 	}
 	mgr.Inbound = chain
 
+	// Multi-tenancy: registry + optional per-tenant daily message quota.
+	mgr.Registry = tenant.NewRegistry()
+	if q := env("VMAIL_DAILY_MSG_QUOTA", ""); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n > 0 {
+			mgr.Quota = tenant.NewQuota(n, 0, nil)
+			log.Printf("per-tenant daily message quota: %d", n)
+		}
+	}
+
 	// Outbound abuse filter (rate + recipient-burst auto-suspend).
 	abuseFilter := abuse.New(abuse.Config{})
 
@@ -90,7 +101,7 @@ func main() {
 			return authn.Verify(context.Background(), raw, ip, helo, mailFrom).AuthResults()
 		},
 	}, mxAddr, domain)
-	sub := smtpin.NewSubmitServer(&smtpin.SubmitBackend{Auth: mgr.AuthSubmit, Enqueue: mgr.Enqueue, Signer: mgr.Signer, Abuse: abuseFilter}, subAddr, domain)
+	sub := smtpin.NewSubmitServer(&smtpin.SubmitBackend{Auth: mgr.AuthSubmit, Enqueue: mgr.Enqueue, Signer: mgr.Signer, Abuse: abuseFilter, Quota: mgr.CheckQuota}, subAddr, domain)
 	imapBe := &imapadapter.Backend{Auth: func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) }}
 	imapSrv := imapadapter.NewServer(imapBe, nil)
 

@@ -33,6 +33,8 @@ type SubmitBackend struct {
 	// Abuse, if set, enforces per-account outbound limits (rate + recipient
 	// burst → throttle/block/suspend) before a message is enqueued.
 	Abuse *abuse.Filter
+	// Quota, if set, enforces per-tenant daily send limits (over quota → 452).
+	Quota func(account string, msgBytes int) error
 }
 
 func (b *SubmitBackend) NewSession(_ *gosmtp.Conn) (gosmtp.Session, error) {
@@ -112,6 +114,13 @@ func (s *submitSession) Data(r io.Reader) error {
 			return &gosmtp.SMTPError{Code: 554, Message: "submission rejected: " + reason}
 		case abuse.Suspend:
 			return &gosmtp.SMTPError{Code: 554, Message: "account suspended: " + reason}
+		}
+	}
+
+	// Per-tenant daily quota.
+	if s.backend.Quota != nil {
+		if err := s.backend.Quota(s.account, len(raw)); err != nil {
+			return &gosmtp.SMTPError{Code: 452, Message: "over quota: " + err.Error()}
 		}
 	}
 

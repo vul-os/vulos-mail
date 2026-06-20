@@ -26,6 +26,7 @@ import (
 	"github.com/vul-os/vmail/internal/filter"
 	"github.com/vul-os/vmail/internal/ids"
 	"github.com/vul-os/vmail/internal/model"
+	"github.com/vul-os/vmail/internal/tenant"
 	"github.com/vul-os/vmail/services/mtaout"
 )
 
@@ -40,6 +41,9 @@ type Manager struct {
 	Signer *dkim.Signer
 	// Inbound, if set, scans received mail to route inbox/junk/reject.
 	Inbound *filter.Chain
+	// Registry + Quota, if set, enforce per-tenant daily send limits.
+	Registry *tenant.Registry
+	Quota    *tenant.Quota
 
 	mu       sync.Mutex
 	accounts map[string]*account.Runtime
@@ -169,6 +173,21 @@ func (m *Manager) HandleBounce(reportingDomain string, msg mtaout.OutMessage, re
 	bounce := dsn.Build(reportingDomain, msg.From, msg.Rcpts, reason)
 	// Best-effort local delivery; if the sender isn't local, nothing to do.
 	_ = m.Deliver(context.Background(), msg.From, bounce)
+}
+
+// CheckQuota enforces the sending account's tenant daily quota (no-op if unset).
+func (m *Manager) CheckQuota(account string, bytes int) error {
+	if m.Quota == nil {
+		return nil
+	}
+	tenantID := account
+	if m.Registry != nil {
+		tenantID = m.Registry.TenantFor(account)
+	}
+	if ok, reason := m.Quota.Allow(tenantID, int64(bytes)); !ok {
+		return errors.New(reason)
+	}
+	return nil
 }
 
 func (m *Manager) checkCred(username, password string) bool {
