@@ -255,17 +255,68 @@
 
   // ── calendar ──────────────────────────────────────────────────────
   let eventsCache = [];
+  let calMonth = new Date();          // first-of-month being viewed
+  let calView = "month";              // "month" | "agenda"
+  let editingEvent = null;            // event under edit in the popover, or null
+  const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const dayKey = (d) => d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate();
+  const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
   async function openCalendar() {
     $("#calendar").hidden = false;
-    $("#calendar-list").innerHTML = '<div class="contacts-empty">Loading…</div>';
+    calMonth = new Date();
     try { eventsCache = await jmap.events(); } catch { eventsCache = []; }
     renderCalendar();
-    $("#event-title").focus();
+  }
+  function setView(v) {
+    calView = v;
+    $$("#cal-view button").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
+    $("#cal-grid").hidden = v !== "month";
+    $("#cal-weekdays").hidden = v !== "month";
+    $("#calendar-list").hidden = v !== "agenda";
+    renderCalendar();
   }
   function renderCalendar() {
-    const evs = eventsCache.slice().sort((a, b) => new Date(a.start) - new Date(b.start));
+    $("#cal-title").textContent = calMonth.toLocaleDateString([], { month: "long", year: "numeric" });
+    calView === "month" ? renderMonth() : renderAgenda();
+  }
+  function eventsByDay() {
+    const map = {};
+    for (const ev of eventsCache) (map[dayKey(new Date(ev.start))] ||= []).push(ev);
+    for (const k in map) map[k].sort((a, b) => new Date(a.start) - new Date(b.start));
+    return map;
+  }
+  function renderMonth() {
+    const wd = $("#cal-weekdays"); wd.innerHTML = WD.map((d) => `<span>${d}</span>`).join("");
+    const grid = $("#cal-grid"); grid.innerHTML = "";
+    const byDay = eventsByDay();
+    const today = new Date();
+    const y = calMonth.getFullYear(), m = calMonth.getMonth();
+    const start = new Date(y, m, 1); start.setDate(1 - start.getDay());
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(start); d.setDate(start.getDate() + i);
+      const cell = el("div", "cal-cell" + (d.getMonth() !== m ? " other" : "") + (sameDay(d, today) ? " today" : ""));
+      cell.appendChild(el("span", "cal-daynum", String(d.getDate())));
+      const evs = byDay[dayKey(d)] || [];
+      evs.slice(0, 3).forEach((ev) => {
+        const t = new Date(ev.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        const pill = el("div", "cal-pill", `<span class="pt">${t}</span><span class="pn">${esc(ev.summary || "(untitled)")}</span>`);
+        pill.onclick = (e) => { e.stopPropagation(); openEventPop(ev); };
+        cell.appendChild(pill);
+      });
+      if (evs.length > 3) {
+        const more = el("div", "cal-more", "+" + (evs.length - 3) + " more");
+        more.onclick = (e) => { e.stopPropagation(); setView("agenda"); };
+        cell.appendChild(more);
+      }
+      cell.onclick = () => openEventPop(null, d);
+      grid.appendChild(cell);
+    }
+  }
+  function renderAgenda() {
     const box = $("#calendar-list");
-    if (!evs.length) { box.innerHTML = '<div class="contacts-empty">No events yet. Add one above.</div>'; return; }
+    const evs = eventsCache.slice().sort((a, b) => new Date(a.start) - new Date(b.start));
+    if (!evs.length) { box.innerHTML = '<div class="contacts-empty">No events yet. Click a day or + Event to add one.</div>'; return; }
     box.innerHTML = ""; let lastDay = "";
     for (const ev of evs) {
       const d = new Date(ev.start);
@@ -273,26 +324,64 @@
       if (day !== lastDay) { box.appendChild(el("div", "cal-day", esc(day))); lastDay = day; }
       const row = el("div", "cal-ev",
         `<span class="cal-time">${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>` +
-        `<span class="cal-dot"></span><span class="cal-title">${esc(ev.summary || "(untitled)")}</span>` +
-        `<span class="rm" title="Delete">✕</span>`);
-      row.querySelector(".rm").onclick = async () => { await jmap.delEvent(ev.id); eventsCache = eventsCache.filter((x) => x.id !== ev.id); renderCalendar(); toast("Event deleted"); };
+        `<span class="cal-dot"></span><span class="cal-title">${esc(ev.summary || "(untitled)")}</span>`);
+      row.onclick = () => openEventPop(ev);
       box.appendChild(row);
     }
   }
+  // local datetime-local string from a Date
+  function dtLocal(d) {
+    const p = (n) => String(n).padStart(2, "0");
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+  function openEventPop(ev, day) {
+    editingEvent = ev;
+    $("#cal-pop").hidden = false;
+    $("#cal-pop-head").textContent = ev ? "Edit event" : "New event";
+    $("#cal-pop-save").textContent = ev ? "Save" : "Add";
+    $("#cal-pop-del").hidden = !ev;
+    $("#event-title").value = ev ? (ev.summary || "") : "";
+    let when;
+    if (ev) when = new Date(ev.start);
+    else { when = new Date(day || calMonth); when.setHours(9, 0, 0, 0); }
+    $("#event-when").value = dtLocal(when);
+    $("#event-title").focus();
+  }
+  function closeEventPop() { $("#cal-pop").hidden = true; editingEvent = null; }
+
   $("#calendar-btn").addEventListener("click", openCalendar);
   $("#calendar-close").addEventListener("click", () => ($("#calendar").hidden = true));
   $("#calendar").addEventListener("click", (e) => { if (e.target.id === "calendar") $("#calendar").hidden = true; });
+  $("#cal-prev").addEventListener("click", () => { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1); renderCalendar(); });
+  $("#cal-next").addEventListener("click", () => { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1); renderCalendar(); });
+  $("#cal-today").addEventListener("click", () => { calMonth = new Date(); renderCalendar(); });
+  $$("#cal-view button").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
+  $("#cal-new").addEventListener("click", () => openEventPop(null, new Date()));
+  $("#cal-pop-cancel").addEventListener("click", closeEventPop);
+  $("#cal-pop").addEventListener("click", (e) => { if (e.target.id === "cal-pop") closeEventPop(); });
+  $("#cal-pop-del").addEventListener("click", async () => {
+    if (!editingEvent) return;
+    const id = editingEvent.id;
+    await jmap.delEvent(id);
+    eventsCache = eventsCache.filter((x) => x.id !== id);
+    closeEventPop(); renderCalendar(); toast("Event deleted");
+  });
   $("#event-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const summary = $("#event-title").value.trim();
     const when = $("#event-when").value;
     if (!summary) return;
     const start = when ? new Date(when).toISOString() : new Date().toISOString();
+    const wasEdit = !!editingEvent;
     try {
+      if (editingEvent) {
+        // edit = delete + re-add (the API has no update verb)
+        await jmap.delEvent(editingEvent.id);
+        eventsCache = eventsCache.filter((x) => x.id !== editingEvent.id);
+      }
       const r = await jmap.addEvent({ summary, start, end: "" });
       eventsCache.push({ id: r.id, summary, start, end: "" });
-      $("#event-title").value = ""; $("#event-when").value = "";
-      renderCalendar(); toast("Event added");
+      closeEventPop(); renderCalendar(); toast(wasEdit ? "Event saved" : "Event added");
     } catch (ex) { toast(ex.message); }
   });
 
@@ -572,7 +661,9 @@
       case "s": if (rows[S.sel]) toggleStar(rows[S.sel]); break;
       case "r": if (rows[S.sel]) replyTo(rows[S.sel]); break;
       case "?": toggleShortcuts(true); break;
-      case "Escape": $("#contacts").hidden = true; $("#settings").hidden = true; $("#calendar").hidden = true; toggleShortcuts(false); break;
+      case "Escape":
+        if (!$("#cal-pop").hidden) { $("#cal-pop").hidden = true; break; }
+        $("#contacts").hidden = true; $("#settings").hidden = true; $("#calendar").hidden = true; toggleShortcuts(false); break;
     }
   });
   function move(d) {

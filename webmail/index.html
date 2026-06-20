@@ -159,17 +159,40 @@
 
 <!-- Calendar -->
 <div class="overlay" id="calendar" hidden>
-  <div class="contacts-card">
-    <div class="contacts-head">
-      <h2>Calendar</h2>
-      <button class="iconbtn" id="calendar-close" title="Close">✕</button>
+  <div class="cal-card">
+    <header class="cal-top">
+      <div class="cal-nav">
+        <button class="iconbtn" id="cal-prev" title="Previous"><svg viewBox="0 0 24 24" class="ic"><path d="m15 18-6-6 6-6"/></svg></button>
+        <button class="iconbtn" id="cal-next" title="Next"><svg viewBox="0 0 24 24" class="ic"><path d="m9 18 6-6-6-6"/></svg></button>
+        <button class="btn btn-ghost" id="cal-today">Today</button>
+        <h2 id="cal-title">Calendar</h2>
+      </div>
+      <div class="cal-actions">
+        <div class="seg" id="cal-view">
+          <button data-view="month" class="on">Month</button>
+          <button data-view="agenda">Agenda</button>
+        </div>
+        <button class="btn btn-primary" id="cal-new">+ Event</button>
+        <button class="iconbtn" id="calendar-close" title="Close"><svg viewBox="0 0 24 24" class="ic"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+      </div>
+    </header>
+    <div class="cal-weekdays" id="cal-weekdays"></div>
+    <div class="cal-grid" id="cal-grid"></div>
+    <div class="cal-agenda" id="calendar-list" hidden></div>
+    <!-- add / detail popover -->
+    <div class="cal-pop" id="cal-pop" hidden>
+      <form id="event-form">
+        <div class="cal-pop-title" id="cal-pop-head">New event</div>
+        <input id="event-title" type="text" placeholder="Add title" required />
+        <input id="event-when" type="datetime-local" />
+        <div class="cal-pop-actions">
+          <button type="button" class="btn btn-ghost" id="cal-pop-del" hidden>Delete</button>
+          <span class="cal-pop-spacer"></span>
+          <button type="button" class="btn btn-ghost" id="cal-pop-cancel">Cancel</button>
+          <button class="btn btn-primary" type="submit" id="cal-pop-save">Save</button>
+        </div>
+      </form>
     </div>
-    <form id="event-form" class="contact-add">
-      <input id="event-title" type="text" placeholder="Event title" required />
-      <input id="event-when" type="datetime-local" />
-      <button class="btn btn-primary" type="submit">Add</button>
-    </form>
-    <div class="contacts-list" id="calendar-list"></div>
   </div>
 </div>
 
