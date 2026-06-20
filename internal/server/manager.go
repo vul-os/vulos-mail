@@ -79,9 +79,21 @@ func (m *Manager) EnsureDKIM(domain, selector string) (string, error) {
 	if m.Signer.Has(domain) {
 		return "", nil
 	}
+	keyPath := filepath.Join(m.dir, "dkim", safeName(domain)+".pem")
+	// Load a persisted key if present (keys MUST be stable: the published DNS TXT
+	// is derived from them, so regenerating on each boot would break DKIM).
+	if data, err := os.ReadFile(keyPath); err == nil {
+		if key, perr := dkim.ParsePrivateKey(data); perr == nil {
+			m.Signer.AddDomain(domain, selector, key)
+			return dkim.PublicTXT(key)
+		}
+	}
 	key, txt, err := dkim.GenerateRSAKey(2048)
 	if err != nil {
 		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err == nil {
+		_ = os.WriteFile(keyPath, dkim.MarshalPrivateKey(key), 0o600)
 	}
 	m.Signer.AddDomain(domain, selector, key)
 	return txt, nil

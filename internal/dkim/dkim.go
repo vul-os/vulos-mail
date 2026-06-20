@@ -12,6 +12,8 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -25,11 +27,34 @@ func GenerateRSAKey(bits int) (*rsa.PrivateKey, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	txt, err := PublicTXT(key)
 	if err != nil {
 		return nil, "", err
 	}
-	return key, "v=DKIM1; k=rsa; p=" + base64.StdEncoding.EncodeToString(der), nil
+	return key, txt, nil
+}
+
+// PublicTXT returns the DKIM DNS TXT record (public key) for a private key.
+func PublicTXT(key *rsa.PrivateKey) (string, error) {
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		return "", err
+	}
+	return "v=DKIM1; k=rsa; p=" + base64.StdEncoding.EncodeToString(der), nil
+}
+
+// MarshalPrivateKey serializes a signing key to PEM (PKCS#1) for persistence.
+func MarshalPrivateKey(key *rsa.PrivateKey) []byte {
+	return pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+}
+
+// ParsePrivateKey parses a PEM-encoded PKCS#1 signing key.
+func ParsePrivateKey(data []byte) (*rsa.PrivateKey, error) {
+	blk, _ := pem.Decode(data)
+	if blk == nil {
+		return nil, errors.New("dkim: invalid PEM")
+	}
+	return x509.ParsePKCS1PrivateKey(blk.Bytes)
 }
 
 type domainKey struct {
