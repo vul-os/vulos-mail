@@ -62,9 +62,15 @@ type session struct {
 	msgs        []selMsg
 	deleted     map[model.ID]bool // \Deleted marks, cleared on (re)select
 	searchRes   imap.UIDSet
+	changes     <-chan struct{} // account change notifications (for IDLE push)
+	unsub       func()
 }
 
 func (s *session) Close() error {
+	if s.unsub != nil {
+		s.unsub()
+		s.unsub = nil
+	}
 	if s.sessTracker != nil {
 		s.sessTracker.Close()
 	}
@@ -152,6 +158,13 @@ func (s *session) loadSelection(label model.LabelID, v *View) {
 	}
 	s.tracker = imapserver.NewMailboxTracker(uint32(len(s.msgs)))
 	s.sessTracker = s.tracker.NewSession()
+	// (Re)subscribe to account changes for IDLE push.
+	if s.unsub != nil {
+		s.unsub()
+	}
+	if s.rt != nil {
+		s.changes, s.unsub = s.rt.Subscribe()
+	}
 }
 
 func (s *session) firstUnseen() uint32 {
@@ -164,6 +177,11 @@ func (s *session) firstUnseen() uint32 {
 }
 
 func (s *session) Unselect() error {
+	if s.unsub != nil {
+		s.unsub()
+		s.unsub = nil
+		s.changes = nil
+	}
 	if s.sessTracker != nil {
 		s.sessTracker.Close()
 		s.sessTracker = nil
@@ -571,13 +589,41 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 }
 
 func (s *session) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) error {
-	// NOTE: no live push fed into the tracker yet (Runtime.onChange -> tracker is
-	// a later wave); block until the client stops idling.
-	if s.sessTracker != nil {
-		return s.sessTracker.Idle(w, stop)
+	if s.sessTracker == nil {
+		<-stop
+		return nil
 	}
-	<-stop
-	return nil
+	// Watch for account changes and push new mail (EXISTS) into the tracker while
+	// the client idles; the SessionTracker.Idle below delivers them.
+	done := make(chan struct{})
+	if s.changes != nil {
+		go func() {
+			ctx := context.Background()
+			for {
+				select {
+				case <-done:
+					return
+				case <-s.changes:
+					v, err := s.view(ctx)
+					if err != nil {
+						continue
+					}
+					ents := v.Entries(s.selLabel)
+					if len(ents) > len(s.msgs) {
+						for _, e := range ents[len(s.msgs):] {
+							if m, ok := s.rt.Message(e.Msg); ok {
+								s.msgs = append(s.msgs, selMsg{uid: e.UID, id: e.Msg, msg: m})
+							}
+						}
+						s.tracker.QueueNumMessages(uint32(len(s.msgs)))
+					}
+				}
+			}
+		}()
+	}
+	err := s.sessTracker.Idle(w, stop)
+	close(done)
+	return err
 }
 
 // --- iteration over the selection honoring seq/uid sets + SEARCHRES ---

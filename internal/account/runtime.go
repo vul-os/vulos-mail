@@ -37,6 +37,9 @@ type Runtime struct {
 	proj *projection.Account
 
 	onChange func(eventlog.Record) // optional push hook; set once via Open opts
+
+	subMu sync.Mutex
+	subs  map[chan struct{}]bool // fan-out change notifications (e.g. IMAP IDLE)
 }
 
 // Open rebuilds the account from its log and returns a ready runtime. The
@@ -55,12 +58,34 @@ func Open(ctx context.Context, log eventlog.Log, store blob.Store, gen *ids.Gen,
 		}
 	}
 	th.Seed(seed)
-	return &Runtime{log: log, store: store, ids: gen, threader: th, proj: proj, onChange: onChange}, nil
+	return &Runtime{log: log, store: store, ids: gen, threader: th, proj: proj, onChange: onChange, subs: map[chan struct{}]bool{}}, nil
 }
 
 func (r *Runtime) notify(rec eventlog.Record) {
 	if r.onChange != nil {
 		r.onChange(rec)
+	}
+	r.subMu.Lock()
+	for ch := range r.subs {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+	r.subMu.Unlock()
+}
+
+// Subscribe returns a channel that ticks on each change to the account (used by
+// IMAP IDLE to push EXISTS), plus a cancel func.
+func (r *Runtime) Subscribe() (<-chan struct{}, func()) {
+	ch := make(chan struct{}, 1)
+	r.subMu.Lock()
+	r.subs[ch] = true
+	r.subMu.Unlock()
+	return ch, func() {
+		r.subMu.Lock()
+		delete(r.subs, ch)
+		r.subMu.Unlock()
 	}
 }
 
