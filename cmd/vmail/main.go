@@ -16,6 +16,9 @@ import (
 	imapadapter "github.com/vul-os/vmail/adapters/imap"
 	jmapadapter "github.com/vul-os/vmail/adapters/jmap"
 	smtpin "github.com/vul-os/vmail/adapters/smtp"
+	"github.com/vul-os/vmail/adapters/webapi"
+	"github.com/vul-os/vmail/caldav"
+	"github.com/vul-os/vmail/carddav"
 	"github.com/vul-os/vmail/internal/abuse"
 	"github.com/vul-os/vmail/internal/account"
 	"github.com/vul-os/vmail/internal/blob"
@@ -113,6 +116,28 @@ func main() {
 
 	jmapBe := &jmapadapter.Backend{Auth: func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) }}
 
+	// Shared HTTP auth for DAV: validate IMAP creds, return the account id.
+	davAuth := func(u, p string) (string, bool) {
+		if _, err := mgr.AuthIMAP(u, p); err == nil {
+			return u, true
+		}
+		return "", false
+	}
+	caldavBe := caldav.New(davAuth, caldav.NewMemStore())
+	carddavBe := &carddav.Backend{Auth: carddav.Auth(davAuth), Store: carddav.NewMemStore()}
+	apiKey := env("VMAIL_API_KEY", "")
+	webapiBe := &webapi.Backend{
+		AuthKey: func(k string) (string, bool) { return acct, apiKey != "" && k == apiKey },
+		Submit:  mgr.SendRaw,
+	}
+
+	// One HTTP server multiplexing JMAP, CalDAV, CardDAV, and the transactional API.
+	httpMux := http.NewServeMux()
+	httpMux.Handle("/jmap/", jmapBe.Handler())
+	httpMux.Handle("/dav/calendars/", caldavBe.Handler())
+	httpMux.Handle("/dav/addressbooks/", carddavBe.Handler())
+	httpMux.Handle("/api/", webapiBe.Handler())
+
 	go serve("mx", mxAddr, mx.ListenAndServe)
 	go serve("submission", subAddr, sub.ListenAndServe)
 	go serve("imap", imapddr, func() error {
@@ -122,7 +147,7 @@ func main() {
 		}
 		return imapSrv.Serve(ln)
 	})
-	go serve("jmap", jmapddr, func() error { return http.ListenAndServe(jmapddr, jmapBe.Handler()) })
+	go serve("http (jmap/dav/api)", jmapddr, func() error { return http.ListenAndServe(jmapddr, httpMux) })
 
 	// Outbound scheduler loop (+ metrics).
 	go func() {

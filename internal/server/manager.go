@@ -226,6 +226,31 @@ func (m *Manager) HandleBounce(reportingDomain string, msg mtaout.OutMessage, re
 	_ = m.Deliver(context.Background(), msg.From, bounce)
 }
 
+// SendRaw accepts a fully-composed message for outbound delivery (used by the
+// transactional webapi): DKIM-signs with the From domain's key and enqueues one
+// message per destination domain. Quota is enforced when configured.
+func (m *Manager) SendRaw(_ context.Context, from string, to []string, raw []byte) error {
+	if err := m.CheckQuota(from, len(raw)); err != nil {
+		return err
+	}
+	if m.Signer != nil {
+		if signed, err := m.Signer.Sign(tenantOf(from), raw); err == nil {
+			raw = signed
+		}
+	}
+	byDomain := map[string][]string{}
+	for _, r := range to {
+		byDomain[tenantOf(r)] = append(byDomain[tenantOf(r)], r)
+	}
+	for d, rcpts := range byDomain {
+		m.Enqueue(mtaout.OutMessage{
+			Tenant: tenantOf(from), FromDomain: tenantOf(from), RcptDomain: d,
+			From: from, Rcpts: rcpts, Raw: raw, Class: mtaout.Transactional,
+		})
+	}
+	return nil
+}
+
 // CheckQuota enforces the sending account's tenant daily quota (no-op if unset).
 func (m *Manager) CheckQuota(account string, bytes int) error {
 	if m.Quota == nil {
