@@ -10,9 +10,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/vul-os/vmail/internal/model"
@@ -27,6 +29,20 @@ type Store interface {
 	Put(ctx context.Context, data []byte) (model.BlobRef, error)
 	Get(ctx context.Context, ref model.BlobRef) ([]byte, error)
 	Has(ctx context.Context, ref model.BlobRef) (bool, error)
+}
+
+// BlobInfo is a stored blob with its modification time (used by GC for a grace
+// window so a just-Put blob isn't swept before its referencing event commits).
+type BlobInfo struct {
+	Ref     model.BlobRef
+	ModTime time.Time
+}
+
+// GCStore is a Store that supports garbage collection (enumerate + delete).
+type GCStore interface {
+	Store
+	ListBlobs(ctx context.Context) ([]BlobInfo, error)
+	Delete(ctx context.Context, ref model.BlobRef) error
 }
 
 // Ref computes the content-addressed ref for data.
@@ -148,6 +164,36 @@ func (s *FS) Get(_ context.Context, ref model.BlobRef) ([]byte, error) {
 }
 
 // Has reports whether ref is present.
+// ListBlobs walks the store and returns every blob with its mod time.
+func (s *FS) ListBlobs(_ context.Context) ([]BlobInfo, error) {
+	var out []BlobInfo
+	err := filepath.WalkDir(s.root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || strings.HasSuffix(p, ".tmp") {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		out = append(out, BlobInfo{Ref: model.BlobRef("sha256:" + d.Name()), ModTime: info.ModTime()})
+		return nil
+	})
+	return out, err
+}
+
+// Delete removes a blob (used by GC).
+func (s *FS) Delete(_ context.Context, ref model.BlobRef) error {
+	p, err := s.path(ref)
+	if err != nil {
+		return err
+	}
+	err = os.Remove(p)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
 func (s *FS) Has(_ context.Context, ref model.BlobRef) (bool, error) {
 	p, err := s.path(ref)
 	if err != nil {

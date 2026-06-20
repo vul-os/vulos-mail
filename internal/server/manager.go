@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -72,9 +73,10 @@ func NewManager(dir string, blobs blob.Store, sched *mtaout.Scheduler) *Manager 
 	}
 }
 
-// EnsureDKIM generates and registers an outbound DKIM key for domain if absent,
-// returning the DNS TXT record to publish at <selector>._domainkey.<domain>.
-// NOTE: keys are in-memory/ephemeral here; persisting them is a later wave.
+// EnsureDKIM loads (or generates + persists) the outbound DKIM key for domain and
+// returns the DNS TXT record to publish at <selector>._domainkey.<domain>. Keys
+// persist to dataDir/dkim/<domain>.pem so the published record stays valid across
+// restarts.
 func (m *Manager) EnsureDKIM(domain, selector string) (string, error) {
 	if m.Signer.Has(domain) {
 		return "", nil
@@ -229,6 +231,49 @@ func (m *Manager) Enqueue(msg mtaout.OutMessage) {
 		m.sched.Enqueue(msg)
 		metrics.SubmissionsAccepted.Inc()
 	}
+}
+
+// GCBlobs deletes blobs not referenced by any account's live messages and older
+// than grace (the grace window avoids racing a just-Put blob whose referencing
+// event hasn't committed yet). No-op if the blob store isn't GC-capable.
+func (m *Manager) GCBlobs(ctx context.Context, grace time.Duration) (int, error) {
+	gc, ok := m.blobs.(blob.GCStore)
+	if !ok {
+		return 0, nil
+	}
+	m.mu.Lock()
+	addrs := make([]string, 0, len(m.creds))
+	for a := range m.creds {
+		addrs = append(addrs, a)
+	}
+	m.mu.Unlock()
+
+	live := map[model.BlobRef]bool{}
+	for _, a := range addrs {
+		rt, err := m.account(ctx, a)
+		if err != nil {
+			continue
+		}
+		for _, ref := range rt.LiveBlobRefs() {
+			live[ref] = true
+		}
+	}
+
+	infos, err := gc.ListBlobs(ctx)
+	if err != nil {
+		return 0, err
+	}
+	cutoff := time.Now().Add(-grace)
+	n := 0
+	for _, bi := range infos {
+		if live[bi.Ref] || bi.ModTime.After(cutoff) {
+			continue
+		}
+		if gc.Delete(ctx, bi.Ref) == nil {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // HandleBounce generates a DSN for a permanently-failed message and delivers it

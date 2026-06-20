@@ -457,6 +457,16 @@ func main() {
 		}
 	}()
 
+	// Periodic blob garbage collection (sweep unreferenced bodies; 1h grace).
+	go func() {
+		for {
+			time.Sleep(6 * time.Hour)
+			if n, err := mgr.GCBlobs(context.Background(), time.Hour); err == nil && n > 0 {
+				log.Printf("blob GC: removed %d unreferenced blobs", n)
+			}
+		}
+	}()
+
 	// Metrics endpoint.
 	if metricsAddr := env("VMAIL_METRICS_ADDR", ":2090"); metricsAddr != "" {
 		go serve("metrics", metricsAddr, func() error {

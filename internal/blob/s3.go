@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -124,5 +125,35 @@ func (s *S3) Has(ctx context.Context, ref model.BlobRef) (bool, error) {
 	return true, nil
 }
 
-// Compile-time assertion that S3 satisfies the Store contract.
-var _ Store = (*S3)(nil)
+// ListBlobs enumerates all stored objects with their mod times (for GC).
+func (s *S3) ListBlobs(ctx context.Context) ([]BlobInfo, error) {
+	var out []BlobInfo
+	for obj := range s.cli.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{Recursive: true}) {
+		if obj.Err != nil {
+			return out, obj.Err
+		}
+		// key is <hash[:2]>/<hash>; ref is the last segment.
+		h := obj.Key
+		if i := strings.LastIndex(h, "/"); i >= 0 {
+			h = h[i+1:]
+		}
+		out = append(out, BlobInfo{Ref: model.BlobRef("sha256:" + h), ModTime: obj.LastModified})
+	}
+	return out, nil
+}
+
+// Delete removes a blob (used by GC).
+func (s *S3) Delete(ctx context.Context, ref model.BlobRef) error {
+	key, err := objectKey(ref)
+	if err != nil {
+		return err
+	}
+	return s.cli.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
+}
+
+// Compile-time assertions.
+var (
+	_ Store   = (*S3)(nil)
+	_ GCStore = (*S3)(nil)
+	_ GCStore = (*FS)(nil)
+)

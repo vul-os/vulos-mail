@@ -195,6 +195,17 @@ func (r *Runtime) Message(id model.ID) (*model.Message, bool) {
 	return copyMessage(m), true
 }
 
+// LiveBlobRefs returns the blob refs of all live messages (for blob GC).
+func (r *Runtime) LiveBlobRefs() []model.BlobRef {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]model.BlobRef, 0, len(r.proj.Messages))
+	for _, m := range r.proj.Messages {
+		out = append(out, m.BlobRef)
+	}
+	return out
+}
+
 // Records returns the full event log (read-only), for edge projections such as
 // the IMAP UID view that fold the same log independently.
 func (r *Runtime) Records(ctx context.Context) ([]eventlog.Record, error) {
