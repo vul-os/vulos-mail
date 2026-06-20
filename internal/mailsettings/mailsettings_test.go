@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vul-os/vmail/internal/mailsettings"
+	"github.com/vul-os/vulos-mail/internal/mailsettings"
 )
 
 func TestResponderRateLimits(t *testing.T) {

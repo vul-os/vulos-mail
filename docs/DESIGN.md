@@ -1,4 +1,4 @@
-# vmail — design
+# vulos-mail — design
 
 A next-generation mail system: ultra-efficient, Gmail-class feature set, built so that
 **one clean domain model is the source of truth and every protocol (JMAP/IMAP/SMTP/CalDAV/CardDAV)
@@ -160,7 +160,7 @@ internal/projection  fold(log) -> account index (messages/labels/threads/flags);
 internal/search      FTS + embeddings projection
 adapters/{jmap,imap,smtp,dav}   protocol edges
 services/{ingest,mtaout}        receive pipeline; outbound deliverability
-cmd/vmail            the binary
+cmd/vulos-mail            the binary
 docs/DESIGN.md       this file
 ```
 

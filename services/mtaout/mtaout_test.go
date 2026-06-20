@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vul-os/vmail/services/mtaout"
+	"github.com/vul-os/vulos-mail/services/mtaout"
 )
 
 // fakeSender returns programmed results and records calls.

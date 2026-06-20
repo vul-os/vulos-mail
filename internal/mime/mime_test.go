@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vul-os/vmail/internal/compose"
-	"github.com/vul-os/vmail/internal/mime"
+	"github.com/vul-os/vulos-mail/internal/compose"
+	"github.com/vul-os/vulos-mail/internal/mime"
 )
 
 func TestParseEnvelopeEncodedAndRefs(t *testing.T) {
@@ -179,7 +179,7 @@ func TestExtractTextMalformed(t *testing.T) {
 func buildMixed(t *testing.T) []byte {
 	t.Helper()
 	raw, err := compose.Build(compose.Message{
-		From:    "alice@vmail.test",
+		From:    "alice@vulos.to",
 		To:      []string{"bob@x.com"},
 		Subject: "with files",
 		Text:    "see attached",

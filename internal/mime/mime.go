@@ -11,7 +11,7 @@ import (
 
 	gomail "github.com/emersion/go-message/mail"
 
-	"github.com/vul-os/vmail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 // ParseEnvelope extracts the protocol-free envelope from a raw message.

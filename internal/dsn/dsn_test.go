@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vul-os/vmail/internal/dsn"
+	"github.com/vul-os/vulos-mail/internal/dsn"
 )
 
 func TestBuildBounceStructure(t *testing.T) {
-	reportingDomain := "vmail.test"
+	reportingDomain := "vulos.to"
 	sender := "alice@example.com"
 	recipients := []string{"bob@gone.example", "carol@nowhere.example"}
 	reason := "550 5.1.1 user unknown"
@@ -78,7 +78,7 @@ func TestBuildBounceStructure(t *testing.T) {
 }
 
 func TestBuildSingleRecipient(t *testing.T) {
-	raw := dsn.Build("mx.vmail.test", "sender@origin.example", []string{"target@dead.example"}, "timed out")
+	raw := dsn.Build("mx.vulos.to", "sender@origin.example", []string{"target@dead.example"}, "timed out")
 
 	msg, err := mail.ReadMessage(bytes.NewReader(raw))
 	if err != nil {
@@ -95,7 +95,7 @@ func TestBuildSingleRecipient(t *testing.T) {
 
 // CRLF line endings are required for SMTP/RFC 5322 wire format.
 func TestBuildUsesCRLF(t *testing.T) {
-	raw := dsn.Build("vmail.test", "s@x.example", []string{"r@y.example"}, "nope")
+	raw := dsn.Build("vulos.to", "s@x.example", []string{"r@y.example"}, "nope")
 	if !bytes.Contains(raw, []byte("\r\n")) {
 		t.Fatal("bounce does not use CRLF line endings")
 	}

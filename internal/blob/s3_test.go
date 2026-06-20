@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/vul-os/vmail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 func TestObjectKey(t *testing.T) {
@@ -36,26 +36,26 @@ func TestObjectKeyMalformed(t *testing.T) {
 }
 
 // TestS3RoundTrip exercises a real S3-compatible endpoint. It is skipped unless
-// VMAIL_TEST_S3_ENDPOINT is set, so CI never needs network. Example:
+// VULOS_TEST_S3_ENDPOINT is set, so CI never needs network. Example:
 //
-//	VMAIL_TEST_S3_ENDPOINT=localhost:9000 \
-//	VMAIL_TEST_S3_ACCESS=minioadmin VMAIL_TEST_S3_SECRET=minioadmin \
-//	VMAIL_TEST_S3_BUCKET=vmail-test go test ./internal/blob/...
+//	VULOS_TEST_S3_ENDPOINT=localhost:9000 \
+//	VULOS_TEST_S3_ACCESS=minioadmin VULOS_TEST_S3_SECRET=minioadmin \
+//	VULOS_TEST_S3_BUCKET=vulos-mail-test go test ./internal/blob/...
 func TestS3RoundTrip(t *testing.T) {
-	endpoint := os.Getenv("VMAIL_TEST_S3_ENDPOINT")
+	endpoint := os.Getenv("VULOS_TEST_S3_ENDPOINT")
 	if endpoint == "" {
-		t.Skip("set VMAIL_TEST_S3_ENDPOINT to run the live S3 round-trip test")
+		t.Skip("set VULOS_TEST_S3_ENDPOINT to run the live S3 round-trip test")
 	}
-	bucket := os.Getenv("VMAIL_TEST_S3_BUCKET")
+	bucket := os.Getenv("VULOS_TEST_S3_BUCKET")
 	if bucket == "" {
-		bucket = "vmail-test"
+		bucket = "vulos-mail-test"
 	}
 	ctx := context.Background()
 	s, err := NewS3(ctx, endpoint,
-		os.Getenv("VMAIL_TEST_S3_ACCESS"),
-		os.Getenv("VMAIL_TEST_S3_SECRET"),
+		os.Getenv("VULOS_TEST_S3_ACCESS"),
+		os.Getenv("VULOS_TEST_S3_SECRET"),
 		bucket,
-		os.Getenv("VMAIL_TEST_S3_SSL") == "1",
+		os.Getenv("VULOS_TEST_S3_SSL") == "1",
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vul-os/vmail/internal/metrics"
+	"github.com/vul-os/vulos-mail/internal/metrics"
 )
 
 func TestHandlerExposesCounters(t *testing.T) {
@@ -22,11 +22,11 @@ func TestHandlerExposesCounters(t *testing.T) {
 	body, _ := io.ReadAll(rec.Result().Body)
 	out := string(body)
 	for _, want := range []string{
-		"vmail_messages_received_total",
+		"vulos_messages_received_total",
 		`disposition="inbox"`,
-		"vmail_outbound_total",
-		"vmail_submissions_accepted_total",
-		"vmail_queue_depth 7",
+		"vulos_outbound_total",
+		"vulos_submissions_accepted_total",
+		"vulos_queue_depth 7",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("/metrics missing %q", want)

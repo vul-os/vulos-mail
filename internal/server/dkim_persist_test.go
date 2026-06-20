@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/server"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/server"
 )
 
 // DKIM keys must be stable across restarts — the published DNS TXT is derived
@@ -15,14 +15,14 @@ func TestDKIMKeyPersistsAcrossRestart(t *testing.T) {
 	blobs, _ := blob.NewFS(filepath.Join(dir, "blobs"))
 
 	m1 := server.NewManager(dir, blobs, nil)
-	txt1, err := m1.EnsureDKIM("vmail.test", "vmail")
+	txt1, err := m1.EnsureDKIM("vulos.to", "vulos-mail")
 	if err != nil || txt1 == "" {
 		t.Fatalf("EnsureDKIM #1: %q %v", txt1, err)
 	}
 
 	// Fresh manager, same data dir = simulated restart.
 	m2 := server.NewManager(dir, blobs, nil)
-	txt2, err := m2.EnsureDKIM("vmail.test", "vmail")
+	txt2, err := m2.EnsureDKIM("vulos.to", "vulos-mail")
 	if err != nil {
 		t.Fatal(err)
 	}

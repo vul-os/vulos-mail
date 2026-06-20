@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/vul-os/vmail/internal/event"
+	"github.com/vul-os/vulos-mail/internal/event"
 )
 
 // Record is one appended event with its assigned monotonic Seq (the account's

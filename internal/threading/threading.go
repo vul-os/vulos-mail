@@ -6,8 +6,8 @@
 package threading
 
 import (
-	"github.com/vul-os/vmail/internal/ids"
-	"github.com/vul-os/vmail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/ids"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 // Threader resolves thread ids. Not safe for concurrent use; the single-writer

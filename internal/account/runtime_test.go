@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/eventlog"
-	"github.com/vul-os/vmail/internal/ids"
-	"github.com/vul-os/vmail/internal/model"
-	"github.com/vul-os/vmail/internal/projection"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/eventlog"
+	"github.com/vul-os/vulos-mail/internal/ids"
+	"github.com/vul-os/vulos-mail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/projection"
 )
 
 func msg(messageID, inReplyTo, subject, body string) []byte {

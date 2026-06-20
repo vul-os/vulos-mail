@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vul-os/vmail/internal/byo"
+	"github.com/vul-os/vulos-mail/internal/byo"
 )
 
 // ---------------------------------------------------------------------------

@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/model"
-	"github.com/vul-os/vmail/internal/search"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/search"
 )
 
 // newStore returns an FS blob store rooted at a temp dir.

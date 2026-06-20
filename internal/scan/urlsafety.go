@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/vul-os/vmail/internal/filter"
-	"github.com/vul-os/vmail/internal/mime"
+	"github.com/vul-os/vulos-mail/internal/filter"
+	"github.com/vul-os/vulos-mail/internal/mime"
 )
 
 // Blocklist resolves the safety of a URL (backed by PhishTank/URLhaus/Google

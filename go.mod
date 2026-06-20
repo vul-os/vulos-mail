@@ -1,4 +1,4 @@
-module github.com/vul-os/vmail
+module github.com/vul-os/vulos-mail
 
 go 1.25
 

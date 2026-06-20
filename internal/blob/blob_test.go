@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/vul-os/vmail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/blob"
 )
 
 func TestPutGetDedupIntegrity(t *testing.T) {

@@ -1,7 +1,7 @@
 // Package filter is the inbound message-scanning pipeline — the clean
 // replacement for vulos-mail's VulosIncomingFilter kernel hook. Scanners (spam,
 // URL-safety, CSAM, …) run over a received message and return a verdict; the
-// delivery layer routes accordingly (inbox / junk / reject). Because vmail's
+// delivery layer routes accordingly (inbox / junk / reject). Because vulos-mail's
 // receive path is an adapter over the runtime, this needs no kernel edit — the
 // Manager just runs the chain before choosing a delivery label.
 package filter

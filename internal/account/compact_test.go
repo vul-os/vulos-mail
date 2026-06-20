@@ -5,11 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/vul-os/vmail/internal/account"
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/eventlog"
-	"github.com/vul-os/vmail/internal/ids"
-	"github.com/vul-os/vmail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/eventlog"
+	"github.com/vul-os/vulos-mail/internal/ids"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 func TestCompactPreservesStateAndShrinksLog(t *testing.T) {

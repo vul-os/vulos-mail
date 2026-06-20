@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
-	"github.com/vul-os/vmail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 // ErrNotFound is returned by Get when a ref is absent.

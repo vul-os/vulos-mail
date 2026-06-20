@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	jmapadapter "github.com/vul-os/vmail/adapters/jmap"
-	"github.com/vul-os/vmail/internal/account"
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/eventlog"
-	"github.com/vul-os/vmail/internal/ids"
-	"github.com/vul-os/vmail/internal/model"
+	jmapadapter "github.com/vul-os/vulos-mail/adapters/jmap"
+	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/eventlog"
+	"github.com/vul-os/vulos-mail/internal/ids"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 // Full JMAP send flow: create a draft, then EmailSubmission/set referencing it
@@ -49,7 +49,7 @@ func TestJMAPSubmissionFlow(t *testing.T) {
 					"draft1": map[string]any{
 						"mailboxIds": map[string]bool{"drafts": true},
 						"keywords":   map[string]bool{"$draft": true},
-						"from":       []map[string]string{{"email": "alice@vmail.test"}},
+						"from":       []map[string]string{{"email": "alice@vulos.to"}},
 						"to":         []map[string]string{{"email": "bob@example.com"}},
 						"subject":    "Hello from JMAP",
 						"textBody":   []map[string]string{{"partId": "t", "type": "text/plain"}},

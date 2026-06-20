@@ -3,7 +3,7 @@ package carddav_test
 import (
 	"testing"
 
-	"github.com/vul-os/vmail/carddav"
+	"github.com/vul-os/vulos-mail/carddav"
 )
 
 func TestContactRoundTrip(t *testing.T) {
@@ -24,23 +24,23 @@ func TestFSStorePersistsContacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	vcf, _ := carddav.BuildContact(carddav.Contact{Name: "Carol", Email: "carol@x.com"})
-	if _, err := s.Put("alice@vmail.test", "c1.vcf", vcf); err != nil {
+	if _, err := s.Put("alice@vulos.to", "c1.vcf", vcf); err != nil {
 		t.Fatal(err)
 	}
 
 	// Reopen from disk: the contact survives.
 	s2, _ := carddav.NewFSStore(dir)
-	res, err := s2.List("alice@vmail.test")
+	res, err := s2.List("alice@vulos.to")
 	if err != nil || len(res) != 1 {
 		t.Fatalf("List = %d (%v), want 1", len(res), err)
 	}
 	if c := carddav.ParseContact(res[0].Data); c.Email != "carol@x.com" {
 		t.Errorf("persisted contact wrong: %+v", c)
 	}
-	if err := s2.Delete("alice@vmail.test", "c1.vcf"); err != nil {
+	if err := s2.Delete("alice@vulos.to", "c1.vcf"); err != nil {
 		t.Fatal(err)
 	}
-	if res, _ := s2.List("alice@vmail.test"); len(res) != 0 {
+	if res, _ := s2.List("alice@vulos.to"); len(res) != 0 {
 		t.Errorf("after delete, List = %d, want 0", len(res))
 	}
 }

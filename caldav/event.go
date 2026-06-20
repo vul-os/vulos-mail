@@ -18,7 +18,7 @@ type Event struct {
 // BuildEvent serializes an event to a VCALENDAR/VEVENT body.
 func BuildEvent(e Event) ([]byte, error) {
 	cal := ical.NewCalendar()
-	cal.Props.SetText(ical.PropProductID, "-//vmail//webmail//EN")
+	cal.Props.SetText(ical.PropProductID, "-//vulos-mail//webmail//EN")
 	cal.Props.SetText(ical.PropVersion, "2.0")
 
 	ev := ical.NewEvent()

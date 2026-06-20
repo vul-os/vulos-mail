@@ -10,14 +10,14 @@ import (
 	"github.com/emersion/go-sasl"
 	gosmtp "github.com/emersion/go-smtp"
 
-	smtpin "github.com/vul-os/vmail/adapters/smtp"
-	"github.com/vul-os/vmail/internal/account"
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/dkim"
-	"github.com/vul-os/vmail/internal/eventlog"
-	"github.com/vul-os/vmail/internal/ids"
-	"github.com/vul-os/vmail/internal/model"
-	"github.com/vul-os/vmail/services/mtaout"
+	smtpin "github.com/vul-os/vulos-mail/adapters/smtp"
+	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/dkim"
+	"github.com/vul-os/vulos-mail/internal/eventlog"
+	"github.com/vul-os/vulos-mail/internal/ids"
+	"github.com/vul-os/vulos-mail/internal/model"
+	"github.com/vul-os/vulos-mail/services/mtaout"
 )
 
 // Authenticated submission: AUTH PLAIN -> MAIL/RCPT/DATA stores a Sent copy and
@@ -41,7 +41,7 @@ func TestSubmissionStoresSentAndEnqueues(t *testing.T) {
 		},
 		Enqueue: func(m mtaout.OutMessage) { enqueued = append(enqueued, m) },
 	}
-	srv := smtpin.NewSubmitServer(be, "127.0.0.1:0", "vmail.test")
+	srv := smtpin.NewSubmitServer(be, "127.0.0.1:0", "vulos.to")
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -58,8 +58,8 @@ func TestSubmissionStoresSentAndEnqueues(t *testing.T) {
 		t.Fatalf("auth: %v", err)
 	}
 
-	raw := []byte("From: alice@vmail.test\r\nTo: bob@gmail.com, carol@yahoo.com\r\nSubject: Hi\r\n\r\nbody\r\n")
-	if err := c.Mail("alice@vmail.test", nil); err != nil {
+	raw := []byte("From: alice@vulos.to\r\nTo: bob@gmail.com, carol@yahoo.com\r\nSubject: Hi\r\n\r\nbody\r\n")
+	if err := c.Mail("alice@vulos.to", nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, rcpt := range []string{"bob@gmail.com", "carol@yahoo.com"} {
@@ -94,7 +94,7 @@ func TestSubmissionStoresSentAndEnqueues(t *testing.T) {
 	domains := map[string]bool{}
 	for _, m := range enqueued {
 		domains[m.RcptDomain] = true
-		if m.Tenant != "tenant-a" || m.FromDomain != "vmail.test" {
+		if m.Tenant != "tenant-a" || m.FromDomain != "vulos.to" {
 			t.Errorf("bad OutMessage fields: %+v", m)
 		}
 	}
@@ -115,7 +115,7 @@ func TestSubmissionDKIMSigns(t *testing.T) {
 		t.Fatal(err)
 	}
 	signer := dkim.NewSigner()
-	signer.AddDomain("vmail.test", "s1", key)
+	signer.AddDomain("vulos.to", "s1", key)
 
 	var enqueued []mtaout.OutMessage
 	be := &smtpin.SubmitBackend{
@@ -133,13 +133,13 @@ func TestSubmissionDKIMSigns(t *testing.T) {
 		t.Fatalf("sasl: %v", err)
 	}
 
-	if err := sess.Mail("alice@vmail.test", nil); err != nil {
+	if err := sess.Mail("alice@vulos.to", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := sess.Rcpt("bob@gmail.com", nil); err != nil {
 		t.Fatal(err)
 	}
-	raw := "From: alice@vmail.test\r\nTo: bob@gmail.com\r\nSubject: Signed\r\n\r\nhello\r\n"
+	raw := "From: alice@vulos.to\r\nTo: bob@gmail.com\r\nSubject: Signed\r\n\r\nhello\r\n"
 	if err := sess.Data(strings.NewReader(raw)); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestSubmissionDKIMSigns(t *testing.T) {
 		t.Fatalf("expected 1 enqueued, got %d", len(enqueued))
 	}
 	results, err := dkim.Verify(enqueued[0].Raw, func(d string) ([]string, error) {
-		if d == "s1._domainkey.vmail.test" {
+		if d == "s1._domainkey.vulos.to" {
 			return []string{txt}, nil
 		}
 		return nil, nil
@@ -155,7 +155,7 @@ func TestSubmissionDKIMSigns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !dkim.Aligned(results, "vmail.test") {
+	if !dkim.Aligned(results, "vulos.to") {
 		t.Errorf("submitted mail should carry an aligned DKIM signature, got %+v", results)
 	}
 }

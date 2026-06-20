@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/vul-os/vmail/internal/event"
-	"github.com/vul-os/vmail/internal/eventlog"
-	"github.com/vul-os/vmail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/event"
+	"github.com/vul-os/vulos-mail/internal/eventlog"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 // The SQLite log must persist across reopen: recover Seq, continue numbering

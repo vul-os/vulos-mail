@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/model"
-	"github.com/vul-os/vmail/internal/server"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/server"
 )
 
 // GC deletes blobs no live message references, and keeps referenced ones.
@@ -16,13 +16,13 @@ func TestGCBlobsSweepsOrphans(t *testing.T) {
 	dir := t.TempDir()
 	blobs, _ := blob.NewFS(filepath.Join(dir, "blobs"))
 	mgr := server.NewManager(dir, blobs, nil)
-	_ = mgr.AddAccount("alice@vmail.test", "pw")
+	_ = mgr.AddAccount("alice@vulos.to", "pw")
 
 	// A live message (its blob is referenced).
-	if err := mgr.Deliver(ctx, "alice@vmail.test", []byte("From: x@y\r\nTo: alice@vmail.test\r\nSubject: keep\r\n\r\nlive body\r\n")); err != nil {
+	if err := mgr.Deliver(ctx, "alice@vulos.to", []byte("From: x@y\r\nTo: alice@vulos.to\r\nSubject: keep\r\n\r\nlive body\r\n")); err != nil {
 		t.Fatal(err)
 	}
-	liveRef := blob.Ref([]byte("From: x@y\r\nTo: alice@vmail.test\r\nSubject: keep\r\n\r\nlive body\r\n"))
+	liveRef := blob.Ref([]byte("From: x@y\r\nTo: alice@vulos.to\r\nSubject: keep\r\n\r\nlive body\r\n"))
 
 	// An orphan blob never referenced by any message.
 	orphan, err := blobs.Put(ctx, []byte("orphan bytes nobody references"))
@@ -44,7 +44,7 @@ func TestGCBlobsSweepsOrphans(t *testing.T) {
 		t.Error("live blob must NOT be deleted")
 	}
 	// The live message is still readable.
-	rt, _ := mgr.AuthIMAP("alice@vmail.test", "pw")
+	rt, _ := mgr.AuthIMAP("alice@vulos.to", "pw")
 	if got := rt.MessagesWithLabel(model.LabelInbox); len(got) != 1 {
 		t.Fatalf("inbox should still have its message, got %d", len(got))
 	}

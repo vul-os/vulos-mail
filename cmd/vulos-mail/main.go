@@ -1,4 +1,4 @@
-// Command vmail runs the mail system: MX (receive), submission (send), and IMAP
+// Command vulos-mail runs the mail system: MX (receive), submission (send), and IMAP
 // (serve) listeners over a shared account manager, plus the outbound scheduler
 // loop. Configuration is via environment variables; account provisioning here is
 // a single demo account (real provisioning/auth is a later wave).
@@ -18,29 +18,29 @@ import (
 	"strings"
 	"time"
 
-	imapadapter "github.com/vul-os/vmail/adapters/imap"
-	jmapadapter "github.com/vul-os/vmail/adapters/jmap"
-	smtpin "github.com/vul-os/vmail/adapters/smtp"
-	"github.com/vul-os/vmail/adapters/webapi"
-	"github.com/vul-os/vmail/caldav"
-	"github.com/vul-os/vmail/carddav"
-	"github.com/vul-os/vmail/internal/abuse"
-	"github.com/vul-os/vmail/internal/account"
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/compose"
-	"github.com/vul-os/vmail/internal/emailauth"
-	"github.com/vul-os/vmail/internal/eventlog"
-	"github.com/vul-os/vmail/internal/filter"
-	"github.com/vul-os/vmail/internal/ids"
-	"github.com/vul-os/vmail/internal/mailsettings"
-	"github.com/vul-os/vmail/internal/metrics"
-	"github.com/vul-os/vmail/internal/mime"
-	"github.com/vul-os/vmail/internal/model"
-	"github.com/vul-os/vmail/internal/scan"
-	"github.com/vul-os/vmail/internal/server"
-	"github.com/vul-os/vmail/internal/tenant"
-	"github.com/vul-os/vmail/internal/tlsconf"
-	"github.com/vul-os/vmail/services/mtaout"
+	imapadapter "github.com/vul-os/vulos-mail/adapters/imap"
+	jmapadapter "github.com/vul-os/vulos-mail/adapters/jmap"
+	smtpin "github.com/vul-os/vulos-mail/adapters/smtp"
+	"github.com/vul-os/vulos-mail/adapters/webapi"
+	"github.com/vul-os/vulos-mail/caldav"
+	"github.com/vul-os/vulos-mail/carddav"
+	"github.com/vul-os/vulos-mail/internal/abuse"
+	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/compose"
+	"github.com/vul-os/vulos-mail/internal/emailauth"
+	"github.com/vul-os/vulos-mail/internal/eventlog"
+	"github.com/vul-os/vulos-mail/internal/filter"
+	"github.com/vul-os/vulos-mail/internal/ids"
+	"github.com/vul-os/vulos-mail/internal/mailsettings"
+	"github.com/vul-os/vulos-mail/internal/metrics"
+	"github.com/vul-os/vulos-mail/internal/mime"
+	"github.com/vul-os/vulos-mail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/scan"
+	"github.com/vul-os/vulos-mail/internal/server"
+	"github.com/vul-os/vulos-mail/internal/tenant"
+	"github.com/vul-os/vulos-mail/internal/tlsconf"
+	"github.com/vul-os/vulos-mail/services/mtaout"
 )
 
 func env(key, def string) string {
@@ -50,27 +50,65 @@ func env(key, def string) string {
 	return def
 }
 
+// loadEnv loads KEY=VALUE pairs from a dotenv file into the process environment
+// (without overriding values already set). The file is chosen by VULOS_ENV_FILE,
+// else .env.<VULOS_ENV> (e.g. VULOS_ENV=main -> .env.main), else .env if present.
+func loadEnv() {
+	path := os.Getenv("VULOS_ENV_FILE")
+	if path == "" {
+		if name := os.Getenv("VULOS_ENV"); name != "" {
+			path = ".env." + name
+		} else if _, err := os.Stat(".env"); err == nil {
+			path = ".env"
+		} else {
+			return
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		log.Printf("env file %s: %v (skipping)", path, err)
+		return
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.Trim(strings.TrimSpace(v), `"'`)
+		if _, set := os.LookupEnv(k); !set {
+			_ = os.Setenv(k, v)
+		}
+	}
+	log.Printf("loaded config from %s", path)
+}
+
 func main() {
+	loadEnv()
 	var (
-		dataDir = env("VMAIL_DATA_DIR", "./data")
-		domain  = env("VMAIL_DOMAIN", "vmail.test")
-		mxAddr  = env("VMAIL_MX_ADDR", ":2525")
-		subAddr = env("VMAIL_SUBMIT_ADDR", ":2587")
-		imapddr = env("VMAIL_IMAP_ADDR", ":2143")
-		jmapddr = env("VMAIL_JMAP_ADDR", ":2080")
-		acct    = env("VMAIL_ACCOUNT", "")
-		pass    = env("VMAIL_PASSWORD", "")
+		dataDir = env("VULOS_DATA_DIR", "./data")
+		domain  = env("VULOS_DOMAIN", "vulos.to")
+		mxAddr  = env("VULOS_MX_ADDR", ":2525")
+		subAddr = env("VULOS_SUBMIT_ADDR", ":2587")
+		imapddr = env("VULOS_IMAP_ADDR", ":2143")
+		jmapddr = env("VULOS_JMAP_ADDR", ":2080")
+		acct    = env("VULOS_ACCOUNT", "")
+		pass    = env("VULOS_PASSWORD", "")
 	)
 
 	// Blob store: S3-compatible if configured, else local FS (both zstd + dedup).
 	var blobs blob.Store
-	if ep := env("VMAIL_S3_ENDPOINT", ""); ep != "" {
-		s3, serr := blob.NewS3(context.Background(), ep, env("VMAIL_S3_KEY", ""), env("VMAIL_S3_SECRET", ""), env("VMAIL_S3_BUCKET", "vmail"), env("VMAIL_S3_SSL", "") != "")
+	if ep := env("VULOS_S3_ENDPOINT", ""); ep != "" {
+		s3, serr := blob.NewS3(context.Background(), ep, env("VULOS_S3_KEY", ""), env("VULOS_S3_SECRET", ""), env("VULOS_S3_BUCKET", "vulos-mail"), env("VULOS_S3_SSL", "") != "")
 		if serr != nil {
 			log.Fatalf("s3 blob store: %v", serr)
 		}
 		blobs = s3
-		log.Printf("blob store: S3 %s/%s", ep, env("VMAIL_S3_BUCKET", "vmail"))
+		log.Printf("blob store: S3 %s/%s", ep, env("VULOS_S3_BUCKET", "vulos-mail"))
 	} else {
 		fs, ferr := blob.NewFS(dataDir + "/blobs")
 		if ferr != nil {
@@ -79,23 +117,23 @@ func main() {
 		blobs = fs
 	}
 
-	// TLS: bring-your-own cert/key, or self-signed for dev (VMAIL_TLS_SELFSIGNED=1).
+	// TLS: bring-your-own cert/key, or self-signed for dev (VULOS_TLS_SELFSIGNED=1).
 	var selfSigned []string
-	if env("VMAIL_TLS_SELFSIGNED", "") != "" {
+	if env("VULOS_TLS_SELFSIGNED", "") != "" {
 		selfSigned = []string{domain, "localhost"}
 	}
-	tlsCfg, err := tlsconf.Config(env("VMAIL_TLS_CERT", ""), env("VMAIL_TLS_KEY", ""), selfSigned...)
+	tlsCfg, err := tlsconf.Config(env("VULOS_TLS_CERT", ""), env("VULOS_TLS_KEY", ""), selfSigned...)
 	if err != nil {
 		log.Fatalf("tls: %v", err)
 	}
 	// ACME (Let's Encrypt) for real certs, if configured. Overrides the cert/key
 	// or self-signed config above. Serves HTTP-01 challenges on :80.
-	if domains := env("VMAIL_ACME_DOMAINS", ""); domains != "" {
+	if domains := env("VULOS_ACME_DOMAINS", ""); domains != "" {
 		am := &autocert.Manager{
 			Prompt:     autocert.AcceptTOS,
 			Cache:      autocert.DirCache(dataDir + "/acme"),
 			HostPolicy: autocert.HostWhitelist(strings.Split(domains, ",")...),
-			Email:      env("VMAIL_ACME_EMAIL", ""),
+			Email:      env("VULOS_ACME_EMAIL", ""),
 		}
 		tlsCfg = am.TLSConfig()
 		go func() {
@@ -119,19 +157,19 @@ func main() {
 	})
 
 	mgr := server.NewManager(dataDir, blobs, sched)
-	if env("VMAIL_DB", "") == "sqlite" {
+	if env("VULOS_DB", "") == "sqlite" {
 		mgr.LogOpen = func(d string) (eventlog.Log, error) { return eventlog.OpenSQLite(filepath.Join(d, "log.db"), nil) }
 		log.Printf("event log backend: sqlite")
 	}
 	sched.SetOnBounce(func(msg mtaout.OutMessage, reason string) { mgr.HandleBounce(domain, msg, reason) })
-	if txt, err := mgr.EnsureDKIM(domain, "vmail"); err == nil && txt != "" {
-		log.Printf("DKIM: publish TXT at vmail._domainkey.%s :  %s", domain, txt)
+	if txt, err := mgr.EnsureDKIM(domain, "vulos-mail"); err == nil && txt != "" {
+		log.Printf("DKIM: publish TXT at vulos-mail._domainkey.%s :  %s", domain, txt)
 	}
 	if acct != "" && pass != "" {
 		mgr.AddAccount(acct, pass)
 		log.Printf("provisioned account %s", acct)
 	} else {
-		log.Printf("no VMAIL_ACCOUNT/VMAIL_PASSWORD set; no accounts provisioned")
+		log.Printf("no VULOS_ACCOUNT/VULOS_PASSWORD set; no accounts provisioned")
 	}
 
 	// Inbound anti-abuse chain (rspamd if configured).
@@ -148,7 +186,7 @@ func main() {
 
 	// Multi-tenancy: registry + optional per-tenant daily message quota.
 	mgr.Registry = tenant.NewRegistry()
-	if q := env("VMAIL_DAILY_MSG_QUOTA", ""); q != "" {
+	if q := env("VULOS_DAILY_MSG_QUOTA", ""); q != "" {
 		if n, err := strconv.Atoi(q); err == nil && n > 0 {
 			mgr.Quota = tenant.NewQuota(n, 0, nil)
 			log.Printf("per-tenant daily message quota: %d", n)
@@ -206,7 +244,7 @@ func main() {
 	}
 	carddavBe := &carddav.Backend{Auth: carddav.Auth(davAuth), Store: contactStore}
 	cgen := ids.NewGen()
-	apiKey := env("VMAIL_API_KEY", "")
+	apiKey := env("VULOS_API_KEY", "")
 	webapiBe := &webapi.Backend{
 		AuthKey: func(k string) (string, bool) { return acct, apiKey != "" && k == apiKey },
 		Submit:  mgr.SendRaw,
@@ -226,7 +264,7 @@ func main() {
 		}
 		u, p, ok := r.BasicAuth()
 		if !ok {
-			w.Header().Set("WWW-Authenticate", `Basic realm="vmail"`)
+			w.Header().Set("WWW-Authenticate", `Basic realm="vulos-mail"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -270,7 +308,7 @@ func main() {
 	httpMux.HandleFunc("/api/webmail/attachment", func(w http.ResponseWriter, r *http.Request) {
 		u, p, ok := r.BasicAuth()
 		if !ok {
-			w.Header().Set("WWW-Authenticate", `Basic realm="vmail"`)
+			w.Header().Set("WWW-Authenticate", `Basic realm="vulos-mail"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -312,7 +350,7 @@ func main() {
 	httpMux.HandleFunc("/api/webmail/calendar", func(w http.ResponseWriter, r *http.Request) {
 		u, p, ok := r.BasicAuth()
 		if !ok {
-			w.Header().Set("WWW-Authenticate", `Basic realm="vmail"`)
+			w.Header().Set("WWW-Authenticate", `Basic realm="vulos-mail"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -368,7 +406,7 @@ func main() {
 	httpMux.HandleFunc("/api/webmail/contacts", func(w http.ResponseWriter, r *http.Request) {
 		u, p, ok := r.BasicAuth()
 		if !ok {
-			w.Header().Set("WWW-Authenticate", `Basic realm="vmail"`)
+			w.Header().Set("WWW-Authenticate", `Basic realm="vulos-mail"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -417,7 +455,7 @@ func main() {
 	httpMux.HandleFunc("/api/webmail/settings", func(w http.ResponseWriter, r *http.Request) {
 		u, p, ok := r.BasicAuth()
 		if !ok {
-			w.Header().Set("WWW-Authenticate", `Basic realm="vmail"`)
+			w.Header().Set("WWW-Authenticate", `Basic realm="vulos-mail"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -494,7 +532,7 @@ func main() {
 
 	// Webmail static UI at the root (registered last; longest-prefix routing keeps
 	// the API/DAV/JMAP handlers above taking precedence).
-	if dir := env("VMAIL_WEBMAIL_DIR", "./webmail"); dir != "" {
+	if dir := env("VULOS_WEBMAIL_DIR", "./webmail"); dir != "" {
 		httpMux.Handle("/", http.FileServer(http.Dir(dir)))
 	}
 
@@ -549,7 +587,7 @@ func main() {
 	}()
 
 	// Metrics endpoint.
-	if metricsAddr := env("VMAIL_METRICS_ADDR", ":2090"); metricsAddr != "" {
+	if metricsAddr := env("VULOS_METRICS_ADDR", ":2090"); metricsAddr != "" {
 		go serve("metrics", metricsAddr, func() error {
 			mux := http.NewServeMux()
 			mux.Handle("/metrics", metrics.Handler())
@@ -557,7 +595,7 @@ func main() {
 		})
 	}
 
-	log.Printf("vmail up: domain=%s mx=%s submit=%s imap=%s jmap=%s data=%s", domain, mxAddr, subAddr, imapddr, jmapddr, dataDir)
+	log.Printf("vulos-mail up: domain=%s mx=%s submit=%s imap=%s jmap=%s data=%s", domain, mxAddr, subAddr, imapddr, jmapddr, dataDir)
 	select {} // block forever
 }
 

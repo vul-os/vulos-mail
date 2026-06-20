@@ -154,7 +154,7 @@ func certTemplate(hosts ...string) (*x509.Certificate, error) {
 	now := time.Now()
 	template := &x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{Organization: []string{"vmail self-signed"}},
+		Subject:               pkix.Name{Organization: []string{"vulos-mail self-signed"}},
 		NotBefore:             now.Add(-time.Hour),
 		NotAfter:              now.Add(certValidity),
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign,

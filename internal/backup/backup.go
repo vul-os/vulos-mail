@@ -22,10 +22,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/eventlog"
-	"github.com/vul-os/vmail/internal/model"
-	"github.com/vul-os/vmail/internal/projection"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/eventlog"
+	"github.com/vul-os/vulos-mail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/projection"
 )
 
 // ExportMbox writes every (non-trash, non-spam) message to w in mbox format.
@@ -140,7 +140,7 @@ func ExportMaildir(ctx context.Context, log eventlog.Log, store blob.Store, dir 
 // is deterministic and collision-free without depending on wall-clock or PID.
 func maildirName(m *model.Message, i int) string {
 	h := sha256.Sum256([]byte(string(m.ID) + "|" + string(m.BlobRef)))
-	return strconv.Itoa(i) + "." + hex.EncodeToString(h[:8]) + ".vmail"
+	return strconv.Itoa(i) + "." + hex.EncodeToString(h[:8]) + ".vulos-mail"
 }
 
 // maildirFlags renders the Maildir info suffix (":2,<FLAGS>") for a message's

@@ -87,7 +87,7 @@ func (s *session) Data(r io.Reader) error {
 		if ar := s.backend.Verify(raw, s.remoteIP(), s.helo(), s.from); ar != "" {
 			servID := s.backend.AuthServID
 			if servID == "" {
-				servID = "vmail"
+				servID = "vulos-mail"
 			}
 			hdr := []byte("Authentication-Results: " + servID + "; " + ar + "\r\n")
 			raw = append(hdr, raw...)

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vul-os/vmail/internal/filter"
+	"github.com/vul-os/vulos-mail/internal/filter"
 )
 
 // keywordScanner flags messages containing a substring.

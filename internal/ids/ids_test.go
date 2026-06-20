@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vul-os/vmail/internal/ids"
+	"github.com/vul-os/vulos-mail/internal/ids"
 )
 
 const crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"

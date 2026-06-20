@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vul-os/vmail/internal/tenant"
+	"github.com/vul-os/vulos-mail/internal/tenant"
 )
 
 func TestRegistryResolution(t *testing.T) {

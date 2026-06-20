@@ -11,16 +11,16 @@ import (
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
-	imapadapter "github.com/vul-os/vmail/adapters/imap"
-	"github.com/vul-os/vmail/internal/account"
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/eventlog"
-	"github.com/vul-os/vmail/internal/ids"
-	"github.com/vul-os/vmail/internal/model"
+	imapadapter "github.com/vul-os/vulos-mail/adapters/imap"
+	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/eventlog"
+	"github.com/vul-os/vulos-mail/internal/ids"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 func mkmsg(id, subject, body string) []byte {
-	return []byte(fmt.Sprintf("From: alice@example.com\r\nTo: bob@vmail.test\r\nSubject: %s\r\nMessage-ID: <%s>\r\nDate: Mon, 02 Jan 2006 15:04:05 -0700\r\n\r\n%s\r\n", subject, id, body))
+	return []byte(fmt.Sprintf("From: alice@example.com\r\nTo: bob@vulos.to\r\nSubject: %s\r\nMessage-ID: <%s>\r\nDate: Mon, 02 Jan 2006 15:04:05 -0700\r\n\r\n%s\r\n", subject, id, body))
 }
 
 // Full client↔server round trip against the real emersion/go-imap client.

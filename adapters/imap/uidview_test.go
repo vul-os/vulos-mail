@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	imapadapter "github.com/vul-os/vmail/adapters/imap"
-	"github.com/vul-os/vmail/internal/event"
-	"github.com/vul-os/vmail/internal/eventlog"
-	"github.com/vul-os/vmail/internal/model"
+	imapadapter "github.com/vul-os/vulos-mail/adapters/imap"
+	"github.com/vul-os/vulos-mail/internal/event"
+	"github.com/vul-os/vulos-mail/internal/eventlog"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 func newLog() *eventlog.Mem {

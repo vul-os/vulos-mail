@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/mailsettings"
-	"github.com/vul-os/vmail/internal/server"
-	"github.com/vul-os/vmail/services/mtaout"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/mailsettings"
+	"github.com/vul-os/vulos-mail/internal/server"
+	"github.com/vul-os/vulos-mail/services/mtaout"
 )
 
 func TestVacationAutoReply(t *testing.T) {
@@ -20,14 +20,14 @@ func TestVacationAutoReply(t *testing.T) {
 	mgr := server.NewManager(dir, blobs, sched)
 	mgr.Settings = mailsettings.NewStore()
 	mgr.Vacation = mailsettings.NewResponder(24*time.Hour, func() time.Time { return time.Unix(0, 0).UTC() })
-	_ = mgr.AddAccount("alice@vmail.test", "pw")
-	mgr.Settings.Set("alice@vmail.test", mailsettings.Settings{
+	_ = mgr.AddAccount("alice@vulos.to", "pw")
+	mgr.Settings.Set("alice@vulos.to", mailsettings.Settings{
 		Vacation: mailsettings.Vacation{Enabled: true, Subject: "Away", Body: "back monday"},
 	})
 
 	deliver := func(from string, extraHeaders string) {
-		raw := "From: " + from + "\r\nTo: alice@vmail.test\r\nSubject: hi\r\n" + extraHeaders + "\r\nhello\r\n"
-		if err := mgr.Deliver(ctx, "alice@vmail.test", []byte(raw)); err != nil {
+		raw := "From: " + from + "\r\nTo: alice@vulos.to\r\nSubject: hi\r\n" + extraHeaders + "\r\nhello\r\n"
+		if err := mgr.Deliver(ctx, "alice@vulos.to", []byte(raw)); err != nil {
 			t.Fatal(err)
 		}
 	}

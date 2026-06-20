@@ -8,9 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/vul-os/vmail/internal/filter"
-	"github.com/vul-os/vmail/internal/mime"
-	"github.com/vul-os/vmail/internal/scan"
+	"github.com/vul-os/vulos-mail/internal/filter"
+	"github.com/vul-os/vulos-mail/internal/mime"
+	"github.com/vul-os/vulos-mail/internal/scan"
 )
 
 func multipartWithAttachment(body, attachment string) []byte {

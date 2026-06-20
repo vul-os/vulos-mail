@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vul-os/vmail/caldav"
+	"github.com/vul-os/vulos-mail/caldav"
 )
 
 // testAuth accepts a single hard-coded credential and maps it to account
@@ -51,7 +51,7 @@ func do(t *testing.T, srv *httptest.Server, method, path, body string, hdr map[s
 
 const simpleEvent = "BEGIN:VCALENDAR\r\n" +
 	"VERSION:2.0\r\n" +
-	"PRODID:-//vmail//test//EN\r\n" +
+	"PRODID:-//vulos-mail//test//EN\r\n" +
 	"BEGIN:VEVENT\r\n" +
 	"UID:simple-1\r\n" +
 	"DTSTART:20260615T090000Z\r\n" +
@@ -62,7 +62,7 @@ const simpleEvent = "BEGIN:VCALENDAR\r\n" +
 
 const recurringEvent = "BEGIN:VCALENDAR\r\n" +
 	"VERSION:2.0\r\n" +
-	"PRODID:-//vmail//test//EN\r\n" +
+	"PRODID:-//vulos-mail//test//EN\r\n" +
 	"BEGIN:VEVENT\r\n" +
 	"UID:daily-1\r\n" +
 	"DTSTART:20260601T120000Z\r\n" +

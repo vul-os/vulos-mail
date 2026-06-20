@@ -1,7 +1,7 @@
 // Package server assembles the pieces into a running multi-account mail system:
 // it manages per-account runtimes (each its own durable log over a shared,
 // deduplicated blob store) and exposes the callbacks the protocol adapters need
-// — MX delivery, IMAP auth, submission auth. This is the wiring layer; cmd/vmail
+// — MX delivery, IMAP auth, submission auth. This is the wiring layer; cmd/vulos-mail
 // turns it into a process.
 //
 // Auth here is a placeholder in-memory credential map; OAuth2/TOTP/passkeys are a
@@ -21,20 +21,20 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/vul-os/vmail/internal/account"
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/compose"
-	"github.com/vul-os/vmail/internal/dkim"
-	"github.com/vul-os/vmail/internal/dsn"
-	"github.com/vul-os/vmail/internal/eventlog"
-	"github.com/vul-os/vmail/internal/filter"
-	"github.com/vul-os/vmail/internal/ids"
-	"github.com/vul-os/vmail/internal/mailsettings"
-	"github.com/vul-os/vmail/internal/metrics"
-	"github.com/vul-os/vmail/internal/mime"
-	"github.com/vul-os/vmail/internal/model"
-	"github.com/vul-os/vmail/internal/tenant"
-	"github.com/vul-os/vmail/services/mtaout"
+	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/compose"
+	"github.com/vul-os/vulos-mail/internal/dkim"
+	"github.com/vul-os/vulos-mail/internal/dsn"
+	"github.com/vul-os/vulos-mail/internal/eventlog"
+	"github.com/vul-os/vulos-mail/internal/filter"
+	"github.com/vul-os/vulos-mail/internal/ids"
+	"github.com/vul-os/vulos-mail/internal/mailsettings"
+	"github.com/vul-os/vulos-mail/internal/metrics"
+	"github.com/vul-os/vulos-mail/internal/mime"
+	"github.com/vul-os/vulos-mail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/tenant"
+	"github.com/vul-os/vulos-mail/services/mtaout"
 )
 
 // Manager owns all accounts and the shared infrastructure.

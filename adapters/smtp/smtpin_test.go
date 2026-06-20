@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	smtpin "github.com/vul-os/vmail/adapters/smtp"
+	smtpin "github.com/vul-os/vulos-mail/adapters/smtp"
 )
 
 // Drive the Session interface directly (no socket) to verify MAIL/RCPT/DATA
@@ -31,10 +31,10 @@ func TestSessionDeliversToEachRecipient(t *testing.T) {
 	if err := sess.Mail("alice@out.example", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.Rcpt("bob@vmail.test", nil); err != nil {
+	if err := sess.Rcpt("bob@vulos.to", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.Rcpt("carol@vmail.test", nil); err != nil {
+	if err := sess.Rcpt("carol@vulos.to", nil); err != nil {
 		t.Fatal(err)
 	}
 	raw := "Subject: hi\r\n\r\nbody\r\n"
@@ -45,7 +45,7 @@ func TestSessionDeliversToEachRecipient(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("expected 2 deliveries, got %d", len(got))
 	}
-	if got[0].rcpt != "bob@vmail.test" || got[1].rcpt != "carol@vmail.test" {
+	if got[0].rcpt != "bob@vulos.to" || got[1].rcpt != "carol@vulos.to" {
 		t.Errorf("recipients wrong: %+v", got)
 	}
 	if got[0].raw != raw {
@@ -67,16 +67,16 @@ func TestMXPrependsAuthResults(t *testing.T) {
 	var delivered string
 	be := &smtpin.Backend{
 		Deliver:    func(_ context.Context, _ string, raw []byte) error { delivered = string(raw); return nil },
-		Verify:     func([]byte, net.IP, string, string) string { return "dkim=pass header.d=vmail.test" },
-		AuthServID: "mx.vmail.test",
+		Verify:     func([]byte, net.IP, string, string) string { return "dkim=pass header.d=vulos.to" },
+		AuthServID: "mx.vulos.to",
 	}
 	sess, _ := be.NewSession(nil)
 	_ = sess.Mail("a@b.com", nil)
-	_ = sess.Rcpt("c@vmail.test", nil)
+	_ = sess.Rcpt("c@vulos.to", nil)
 	if err := sess.Data(strings.NewReader("Subject: x\r\n\r\nbody\r\n")); err != nil {
 		t.Fatal(err)
 	}
-	want := "Authentication-Results: mx.vmail.test; dkim=pass header.d=vmail.test\r\n"
+	want := "Authentication-Results: mx.vulos.to; dkim=pass header.d=vulos.to\r\n"
 	if !strings.HasPrefix(delivered, want) {
 		t.Fatalf("delivered message should start with A-R header; got:\n%q", delivered)
 	}

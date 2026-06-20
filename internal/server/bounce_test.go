@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/model"
-	"github.com/vul-os/vmail/internal/server"
-	"github.com/vul-os/vmail/services/mtaout"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/server"
+	"github.com/vul-os/vulos-mail/services/mtaout"
 )
 
 type permFailSender struct{}
@@ -30,19 +30,19 @@ func TestBounceDeliversDSNToSender(t *testing.T) {
 	blobs, _ := blob.NewFS(filepath.Join(dir, "blobs"))
 	sched := mtaout.NewScheduler(mtaout.Config{Sender: permFailSender{}, MaxPerDomain: 10})
 	mgr := server.NewManager(dir, blobs, sched)
-	sched.SetOnBounce(func(msg mtaout.OutMessage, reason string) { mgr.HandleBounce("vmail.test", msg, reason) })
-	_ = mgr.AddAccount("alice@vmail.test", "pw")
+	sched.SetOnBounce(func(msg mtaout.OutMessage, reason string) { mgr.HandleBounce("vulos.to", msg, reason) })
+	_ = mgr.AddAccount("alice@vulos.to", "pw")
 
 	sched.Enqueue(mtaout.OutMessage{
-		Tenant: "vmail.test", FromDomain: "vmail.test", RcptDomain: "nowhere.example",
-		From: "alice@vmail.test", Rcpts: []string{"ghost@nowhere.example"},
-		Raw: []byte("From: alice@vmail.test\r\nTo: ghost@nowhere.example\r\n\r\nhi\r\n"),
+		Tenant: "vulos.to", FromDomain: "vulos.to", RcptDomain: "nowhere.example",
+		From: "alice@vulos.to", Rcpts: []string{"ghost@nowhere.example"},
+		Raw: []byte("From: alice@vulos.to\r\nTo: ghost@nowhere.example\r\n\r\nhi\r\n"),
 	})
 	if st := sched.Tick(ctx, time.Now()); st.Bounced != 1 {
 		t.Fatalf("expected 1 bounce, got %d", st.Bounced)
 	}
 
-	alice, _ := mgr.AuthIMAP("alice@vmail.test", "pw")
+	alice, _ := mgr.AuthIMAP("alice@vulos.to", "pw")
 	inbox := alice.MessagesWithLabel(model.LabelInbox)
 	if len(inbox) != 1 {
 		t.Fatalf("alice should have a bounce DSN in inbox, got %d messages", len(inbox))

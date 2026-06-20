@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vul-os/vmail/internal/event"
-	"github.com/vul-os/vmail/internal/eventlog"
-	"github.com/vul-os/vmail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/event"
+	"github.com/vul-os/vulos-mail/internal/eventlog"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 func fixedNow() time.Time { return time.Unix(0, 0).UTC() }

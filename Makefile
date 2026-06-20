@@ -1,7 +1,7 @@
 .PHONY: build test race cover vet fullstack docker-build docker-up smoke
 
 build:
-	go build -o bin/vmail ./cmd/vmail
+	go build -o bin/vulos-mail ./cmd/vulos-mail
 
 test:
 	go test ./...
@@ -22,13 +22,13 @@ fullstack:
 	go test ./internal/server/ -run TestFullStackSimulation -v
 
 docker-build:
-	docker build -t vmail:dev .
+	docker build -t vulos-mail:dev .
 
 docker-up:
 	docker compose up --build
 
 # Build image, run it, hit the JMAP session endpoint, tear down.
 smoke: docker-build
-	docker run -d --rm --name vmail-smoke -e VMAIL_ACCOUNT=alice@vmail.test -e VMAIL_PASSWORD=pw -p 2080:2080 vmail:dev
-	@sleep 2 && curl -fsS -u alice@vmail.test:pw http://localhost:2080/jmap/session >/dev/null && echo "JMAP OK" || (docker logs vmail-smoke; false)
-	docker stop vmail-smoke
+	docker run -d --rm --name vulos-mail-smoke -e VULOS_ACCOUNT=alice@vulos.to -e VULOS_PASSWORD=pw -p 2080:2080 vulos-mail:dev
+	@sleep 2 && curl -fsS -u alice@vulos.to:pw http://localhost:2080/jmap/session >/dev/null && echo "JMAP OK" || (docker logs vulos-mail-smoke; false)
+	docker stop vulos-mail-smoke

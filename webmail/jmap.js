@@ -1,4 +1,4 @@
-// jmap.js — a tiny JMAP (RFC 8620/8621) client for the vmail API.
+// jmap.js — a tiny JMAP (RFC 8620/8621) client for the vulos-mail API.
 // HTTP Basic auth; one batched POST per call. No dependencies.
 (function (global) {
   "use strict";

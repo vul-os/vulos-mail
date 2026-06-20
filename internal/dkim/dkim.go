@@ -122,7 +122,7 @@ func Verify(raw []byte, lookupTXT func(domain string) ([]string, error)) ([]Resu
 }
 
 // AuthResults formats the DKIM portion of an Authentication-Results header value
-// (RFC 8601), e.g. "dkim=pass header.d=vmail.test".
+// (RFC 8601), e.g. "dkim=pass header.d=vulos.to".
 func AuthResults(results []Result) string {
 	if len(results) == 0 {
 		return "dkim=none"

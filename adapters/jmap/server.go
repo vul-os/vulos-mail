@@ -16,10 +16,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/vul-os/vmail/internal/account"
-	"github.com/vul-os/vmail/internal/compose"
-	"github.com/vul-os/vmail/internal/mime"
-	"github.com/vul-os/vmail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/compose"
+	"github.com/vul-os/vulos-mail/internal/mime"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 // Backend resolves HTTP Basic credentials to an account runtime + account id.

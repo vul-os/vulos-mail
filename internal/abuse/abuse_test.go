@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vul-os/vmail/internal/abuse"
+	"github.com/vul-os/vulos-mail/internal/abuse"
 )
 
 func TestRateLimitThrottles(t *testing.T) {

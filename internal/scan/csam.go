@@ -8,8 +8,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 
-	"github.com/vul-os/vmail/internal/filter"
-	"github.com/vul-os/vmail/internal/mime"
+	"github.com/vul-os/vulos-mail/internal/filter"
+	"github.com/vul-os/vulos-mail/internal/mime"
 )
 
 // Matcher reports whether a content hash is known-bad. A real deployment backs

@@ -18,9 +18,9 @@ import (
 	"github.com/emersion/go-imap/v2/imapserver"
 	"github.com/emersion/go-message/textproto"
 
-	"github.com/vul-os/vmail/internal/account"
-	"github.com/vul-os/vmail/internal/mime"
-	"github.com/vul-os/vmail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/mime"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 const delim = '/'

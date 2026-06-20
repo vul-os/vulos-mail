@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/vul-os/vmail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 // TestSystemLabelsStable pins the exact set, order, ids, names, and kinds of the

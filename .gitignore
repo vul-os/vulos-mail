@@ -3,3 +3,4 @@ bin/
 .DS_Store
 data/
 cover*.out
+.env

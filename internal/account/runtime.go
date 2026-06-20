@@ -15,15 +15,15 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/event"
-	"github.com/vul-os/vmail/internal/eventlog"
-	"github.com/vul-os/vmail/internal/ids"
-	"github.com/vul-os/vmail/internal/mime"
-	"github.com/vul-os/vmail/internal/model"
-	"github.com/vul-os/vmail/internal/projection"
-	"github.com/vul-os/vmail/internal/search"
-	"github.com/vul-os/vmail/internal/threading"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/event"
+	"github.com/vul-os/vulos-mail/internal/eventlog"
+	"github.com/vul-os/vulos-mail/internal/ids"
+	"github.com/vul-os/vulos-mail/internal/mime"
+	"github.com/vul-os/vulos-mail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/projection"
+	"github.com/vul-os/vulos-mail/internal/search"
+	"github.com/vul-os/vulos-mail/internal/threading"
 )
 
 // Runtime is a live, mutable view of one account.

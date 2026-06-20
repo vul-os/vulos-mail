@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	jmapadapter "github.com/vul-os/vmail/adapters/jmap"
-	"github.com/vul-os/vmail/internal/account"
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/eventlog"
-	"github.com/vul-os/vmail/internal/ids"
-	"github.com/vul-os/vmail/internal/model"
+	jmapadapter "github.com/vul-os/vulos-mail/adapters/jmap"
+	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/eventlog"
+	"github.com/vul-os/vulos-mail/internal/ids"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 func newServer(t *testing.T) (*httptest.Server, *account.Runtime) {
@@ -36,7 +36,7 @@ func newServer(t *testing.T) (*httptest.Server, *account.Runtime) {
 }
 
 func msg(id, subject, body string) []byte {
-	return []byte("From: x@y.com\r\nTo: alice@vmail.test\r\nSubject: " + subject + "\r\nMessage-ID: <" + id + ">\r\nDate: Mon, 02 Jan 2006 15:04:05 -0700\r\n\r\n" + body + "\r\n")
+	return []byte("From: x@y.com\r\nTo: alice@vulos.to\r\nSubject: " + subject + "\r\nMessage-ID: <" + id + ">\r\nDate: Mon, 02 Jan 2006 15:04:05 -0700\r\n\r\n" + body + "\r\n")
 }
 
 func apiCall(t *testing.T, srv *httptest.Server, method string, args map[string]any) map[string]any {

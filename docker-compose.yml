@@ -1,22 +1,22 @@
-# Run vmail locally:  docker compose up --build
+# Run vulos-mail locally:  docker compose up --build
 # Then exercise it from the host:
 #   - MX (receive)   : localhost:2525   (SMTP, no auth)
 #   - submission     : localhost:2587   (SMTP, AUTH PLAIN)
 #   - IMAP           : localhost:2143
 #   - JMAP           : http://localhost:2080/jmap/session  (HTTP Basic)
 services:
-  vmail:
+  vulos-mail:
     build: .
     environment:
-      VMAIL_DOMAIN: vmail.test
-      VMAIL_ACCOUNT: alice@vmail.test
-      VMAIL_PASSWORD: alicepw
+      VULOS_DOMAIN: vulos.to
+      VULOS_ACCOUNT: alice@vulos.to
+      VULOS_PASSWORD: alicepw
     ports:
       - "2525:2525" # MX
       - "2587:2587" # submission
       - "2143:2143" # IMAP
       - "2080:2080" # JMAP
     volumes:
-      - vmail-data:/data
+      - vulos-mail-data:/data
 volumes:
-  vmail-data:
+  vulos-mail-data:

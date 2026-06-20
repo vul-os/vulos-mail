@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vul-os/vmail/internal/filter"
+	"github.com/vul-os/vulos-mail/internal/filter"
 )
 
 // Rspamd scans a message via an rspamd HTTP daemon (/checkv2). It maps rspamd's

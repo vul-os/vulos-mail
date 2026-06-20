@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vul-os/vmail/internal/event"
-	"github.com/vul-os/vmail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/event"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 // roundTrip encodes then decodes an event and asserts the decoded value is

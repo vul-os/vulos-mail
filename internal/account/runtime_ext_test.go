@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	smtpin "github.com/vul-os/vmail/adapters/smtp"
-	"github.com/vul-os/vmail/internal/account"
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/eventlog"
-	"github.com/vul-os/vmail/internal/ids"
-	"github.com/vul-os/vmail/internal/model"
+	smtpin "github.com/vul-os/vulos-mail/adapters/smtp"
+	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/eventlog"
+	"github.com/vul-os/vulos-mail/internal/ids"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 // Receive path end-to-end: SMTP adapter -> Deliver -> runtime.Ingest -> query.
@@ -37,8 +37,8 @@ func TestReceivePathThroughSMTPAdapter(t *testing.T) {
 	}
 	sess, _ := be.NewSession(nil)
 	_ = sess.Mail("ext@out.example", nil)
-	_ = sess.Rcpt("bob@vmail.test", nil)
-	raw := []byte("From: ext@out.example\r\nTo: bob@vmail.test\r\nSubject: Hello over SMTP\r\n\r\nthe body keyword zebra\r\n")
+	_ = sess.Rcpt("bob@vulos.to", nil)
+	raw := []byte("From: ext@out.example\r\nTo: bob@vulos.to\r\nSubject: Hello over SMTP\r\n\r\nthe body keyword zebra\r\n")
 	if err := sess.Data(bytes.NewReader(raw)); err != nil {
 		t.Fatal(err)
 	}

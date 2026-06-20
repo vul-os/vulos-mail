@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 func newStore(t *testing.T) *blob.FS {

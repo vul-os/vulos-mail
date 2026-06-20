@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vul-os/vmail/internal/dkim"
-	"github.com/vul-os/vmail/internal/emailauth"
+	"github.com/vul-os/vulos-mail/internal/dkim"
+	"github.com/vul-os/vulos-mail/internal/emailauth"
 )
 
 // fakeDNS serves TXT records from a map and satisfies both blitiri's
@@ -33,7 +33,7 @@ func TestVerifyAllPass(t *testing.T) {
 	}
 	signer := dkim.NewSigner()
 	signer.AddDomain("sender.test", "s1", key)
-	raw := []byte("From: alice@sender.test\r\nTo: bob@vmail.test\r\nSubject: Hi\r\n\r\nbody\r\n")
+	raw := []byte("From: alice@sender.test\r\nTo: bob@vulos.to\r\nSubject: Hi\r\n\r\nbody\r\n")
 	signed, err := signer.Sign("sender.test", raw)
 	if err != nil {
 		t.Fatal(err)

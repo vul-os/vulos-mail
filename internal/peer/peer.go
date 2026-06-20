@@ -1,4 +1,4 @@
-// Package peer implements vmail's "verified peer" / Vulos-identity badge.
+// Package peer implements vulos-mail's "verified peer" / Vulos-identity badge.
 //
 // A Registry holds a federation of trusted ("verified") Vulos peer domains.
 // A message earns the verified badge only when its authenticated From domain

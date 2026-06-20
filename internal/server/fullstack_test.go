@@ -16,17 +16,17 @@ import (
 	"github.com/emersion/go-sasl"
 	gosmtp "github.com/emersion/go-smtp"
 
-	imapadapter "github.com/vul-os/vmail/adapters/imap"
-	jmapadapter "github.com/vul-os/vmail/adapters/jmap"
-	smtpin "github.com/vul-os/vmail/adapters/smtp"
-	"github.com/vul-os/vmail/internal/account"
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/server"
-	"github.com/vul-os/vmail/services/mtaout"
+	imapadapter "github.com/vul-os/vulos-mail/adapters/imap"
+	jmapadapter "github.com/vul-os/vulos-mail/adapters/jmap"
+	smtpin "github.com/vul-os/vulos-mail/adapters/smtp"
+	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/server"
+	"github.com/vul-os/vulos-mail/services/mtaout"
 )
 
 // loopSender closes the outbound loop: instead of dialing the internet, it
-// delivers mail straight back into the local MX, so a vmail->vmail send completes
+// delivers mail straight back into the local MX, so a vulos-mail->vulos-mail send completes
 // fully offline. This is what lets one test simulate the entire mail lifecycle.
 type loopSender struct{ mgr *server.Manager }
 
@@ -56,51 +56,51 @@ func TestFullStackSimulation(t *testing.T) {
 	sched := mtaout.NewScheduler(mtaout.Config{Sender: ls, MaxPerDomain: 20})
 	mgr := server.NewManager(dir, blobs, sched)
 	ls.mgr = mgr
-	if _, err := mgr.EnsureDKIM("vmail.test", "s1"); err != nil {
+	if _, err := mgr.EnsureDKIM("vulos.to", "s1"); err != nil {
 		t.Fatal(err)
 	}
-	_ = mgr.AddAccount("alice@vmail.test", "alicepw")
-	_ = mgr.AddAccount("bob@vmail.test", "bobpw")
+	_ = mgr.AddAccount("alice@vulos.to", "alicepw")
+	_ = mgr.AddAccount("bob@vulos.to", "bobpw")
 
 	// --- listeners ---
 	mxLn, subLn, imapLn := mustListen(t), mustListen(t), mustListen(t)
 	defer mxLn.Close()
 	defer subLn.Close()
 	defer imapLn.Close()
-	go smtpin.NewServer(&smtpin.Backend{Deliver: mgr.Deliver, AuthServID: "vmail.test"}, "", "vmail.test").Serve(mxLn)
-	go smtpin.NewSubmitServer(&smtpin.SubmitBackend{Auth: mgr.AuthSubmit, Enqueue: mgr.Enqueue, Signer: mgr.Signer}, "", "vmail.test").Serve(subLn)
+	go smtpin.NewServer(&smtpin.Backend{Deliver: mgr.Deliver, AuthServID: "vulos.to"}, "", "vulos.to").Serve(mxLn)
+	go smtpin.NewSubmitServer(&smtpin.SubmitBackend{Auth: mgr.AuthSubmit, Enqueue: mgr.Enqueue, Signer: mgr.Signer}, "", "vulos.to").Serve(subLn)
 	imapBe := &imapadapter.Backend{Auth: func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) }}
 	go imapadapter.NewServer(imapBe, nil).Serve(imapLn)
 	jmapSrv := httptest.NewServer((&jmapadapter.Backend{Auth: func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) }}).Handler())
 	defer jmapSrv.Close()
 
 	// --- 1. external -> alice (MX) ---
-	smtpSend(t, mxLn.Addr().String(), "", "", "boss@out.example", "alice@vmail.test",
-		"From: boss@out.example\r\nTo: alice@vmail.test\r\nSubject: Welcome\r\n\r\nwelcome alice\r\n")
-	if n := imapInboxCount(t, imapLn.Addr().String(), "alice@vmail.test", "alicepw"); n != 1 {
+	smtpSend(t, mxLn.Addr().String(), "", "", "boss@out.example", "alice@vulos.to",
+		"From: boss@out.example\r\nTo: alice@vulos.to\r\nSubject: Welcome\r\n\r\nwelcome alice\r\n")
+	if n := imapInboxCount(t, imapLn.Addr().String(), "alice@vulos.to", "alicepw"); n != 1 {
 		t.Fatalf("alice inbox after external mail = %d, want 1", n)
 	}
 
 	// --- 2. alice -> bob (submission -> DKIM -> scheduler -> loop -> MX) ---
-	smtpSend(t, subLn.Addr().String(), "alice@vmail.test", "alicepw", "alice@vmail.test", "bob@vmail.test",
-		"From: alice@vmail.test\r\nTo: bob@vmail.test\r\nSubject: Lunch?\r\n\r\nfree at noon?\r\n")
+	smtpSend(t, subLn.Addr().String(), "alice@vulos.to", "alicepw", "alice@vulos.to", "bob@vulos.to",
+		"From: alice@vulos.to\r\nTo: bob@vulos.to\r\nSubject: Lunch?\r\n\r\nfree at noon?\r\n")
 	if got := sched.Tick(ctx, time.Now()); got.Delivered != 1 {
 		t.Fatalf("scheduler delivered = %d, want 1", got.Delivered)
 	}
 
 	// alice has a Sent copy.
-	alice, _ := mgr.AuthIMAP("alice@vmail.test", "alicepw")
+	alice, _ := mgr.AuthIMAP("alice@vulos.to", "alicepw")
 	if sent := alice.MessagesWithLabel("sent"); len(sent) != 1 {
 		t.Errorf("alice Sent = %d, want 1", len(sent))
 	}
 
 	// --- 3a. bob reads via IMAP ---
-	if n := imapInboxCount(t, imapLn.Addr().String(), "bob@vmail.test", "bobpw"); n != 1 {
+	if n := imapInboxCount(t, imapLn.Addr().String(), "bob@vulos.to", "bobpw"); n != 1 {
 		t.Fatalf("bob inbox via IMAP = %d, want 1 (loop delivery broken)", n)
 	}
 
 	// --- 3b. bob reads the SAME message via JMAP ---
-	subjects := jmapInboxSubjects(t, jmapSrv.URL, "bob@vmail.test", "bobpw")
+	subjects := jmapInboxSubjects(t, jmapSrv.URL, "bob@vulos.to", "bobpw")
 	if len(subjects) != 1 || subjects[0] != "Lunch?" {
 		t.Fatalf("bob inbox via JMAP = %v, want [Lunch?]", subjects)
 	}

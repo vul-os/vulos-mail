@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/vul-os/vmail/internal/event"
+	"github.com/vul-os/vulos-mail/internal/event"
 
 	_ "modernc.org/sqlite" // pure-Go, CGO-free driver, registered as "sqlite"
 )

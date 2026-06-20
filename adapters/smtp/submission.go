@@ -9,11 +9,11 @@ import (
 	"github.com/emersion/go-sasl"
 	gosmtp "github.com/emersion/go-smtp"
 
-	"github.com/vul-os/vmail/internal/abuse"
-	"github.com/vul-os/vmail/internal/account"
-	"github.com/vul-os/vmail/internal/dkim"
-	"github.com/vul-os/vmail/internal/model"
-	"github.com/vul-os/vmail/services/mtaout"
+	"github.com/vul-os/vulos-mail/internal/abuse"
+	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/dkim"
+	"github.com/vul-os/vulos-mail/internal/model"
+	"github.com/vul-os/vulos-mail/services/mtaout"
 )
 
 // SubmitBackend is the authenticated submission (MSA) backend on ports 587/465.

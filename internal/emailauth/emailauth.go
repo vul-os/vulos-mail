@@ -17,8 +17,8 @@ import (
 	"blitiri.com.ar/go/spf"
 	"github.com/emersion/go-msgauth/dmarc"
 
-	"github.com/vul-os/vmail/internal/dkim"
-	"github.com/vul-os/vmail/internal/mime"
+	"github.com/vul-os/vulos-mail/internal/dkim"
+	"github.com/vul-os/vulos-mail/internal/mime"
 )
 
 // Authenticator evaluates inbound sender authentication. Zero value uses real

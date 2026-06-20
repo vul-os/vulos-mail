@@ -9,12 +9,12 @@ import (
 
 	"github.com/emersion/go-imap/v2/imapclient"
 
-	imapadapter "github.com/vul-os/vmail/adapters/imap"
-	"github.com/vul-os/vmail/internal/account"
-	"github.com/vul-os/vmail/internal/blob"
-	"github.com/vul-os/vmail/internal/eventlog"
-	"github.com/vul-os/vmail/internal/ids"
-	"github.com/vul-os/vmail/internal/model"
+	imapadapter "github.com/vul-os/vulos-mail/adapters/imap"
+	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/blob"
+	"github.com/vul-os/vulos-mail/internal/eventlog"
+	"github.com/vul-os/vulos-mail/internal/ids"
+	"github.com/vul-os/vulos-mail/internal/model"
 )
 
 // A client idling on INBOX must receive an EXISTS when new mail arrives.
@@ -63,7 +63,7 @@ func TestIMAPIdlePush(t *testing.T) {
 
 	// Deliver a message while the client idles.
 	time.Sleep(100 * time.Millisecond)
-	if _, err := rt.Ingest(ctx, []byte("From: x@y\r\nTo: bob@vmail.test\r\nSubject: idle push\r\n\r\nhi\r\n"), []model.LabelID{model.LabelInbox}, nil); err != nil {
+	if _, err := rt.Ingest(ctx, []byte("From: x@y\r\nTo: bob@vulos.to\r\nSubject: idle push\r\n\r\nhi\r\n"), []model.LabelID{model.LabelInbox}, nil); err != nil {
 		t.Fatal(err)
 	}
 

@@ -1,4 +1,4 @@
-// app.js — vmail webmail controller. Vanilla JS, no build step.
+// app.js — vulos-mail webmail controller. Vanilla JS, no build step.
 (function () {
   "use strict";
   const $ = (s, r = document) => r.querySelector(s);
@@ -32,11 +32,11 @@
 
   // ── auth ──────────────────────────────────────────────────────────
   async function boot() {
-    const saved = sessionStorage.getItem("vmail.auth");
+    const saved = sessionStorage.getItem("vulos-mail.auth");
     if (saved) {
       const { u, p } = JSON.parse(saved);
       jmap.setAuth(u, p);
-      try { await jmap.session(); return start(); } catch { sessionStorage.removeItem("vmail.auth"); }
+      try { await jmap.session(); return start(); } catch { sessionStorage.removeItem("vulos-mail.auth"); }
     }
     showLogin();
   }
@@ -52,14 +52,14 @@
     jmap.setAuth(u, p);
     try {
       await jmap.session();
-      sessionStorage.setItem("vmail.auth", JSON.stringify({ u, p }));
+      sessionStorage.setItem("vulos-mail.auth", JSON.stringify({ u, p }));
       start();
     } catch (ex) {
       err.textContent = ex.message; err.hidden = false;
       btn.disabled = false; btn.textContent = "Sign in";
     }
   });
-  $("#logout").addEventListener("click", () => { sessionStorage.removeItem("vmail.auth"); location.reload(); });
+  $("#logout").addEventListener("click", () => { sessionStorage.removeItem("vulos-mail.auth"); location.reload(); });
 
   function start() {
     $("#login").hidden = true; $("#app").hidden = false;

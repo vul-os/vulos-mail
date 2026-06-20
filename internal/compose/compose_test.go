@@ -4,15 +4,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vul-os/vmail/internal/compose"
-	"github.com/vul-os/vmail/internal/mime"
+	"github.com/vul-os/vulos-mail/internal/compose"
+	"github.com/vul-os/vulos-mail/internal/mime"
 )
 
 func TestBuildWithAttachmentRoundTrips(t *testing.T) {
 	raw, err := compose.Build(compose.Message{
-		From: "alice@vmail.test", To: []string{"Bob <bob@x.com>"}, Cc: []string{"c@x.com"},
+		From: "alice@vulos.to", To: []string{"Bob <bob@x.com>"}, Cc: []string{"c@x.com"},
 		Subject: "Hi", Text: "plain body", HTML: "<p>rich <b>body</b></p>",
-		MessageID:   "m1@vmail.test",
+		MessageID:   "m1@vulos.to",
 		Attachments: []compose.Attachment{{Name: "note.txt", Type: "text/plain", Data: []byte("file-bytes")}},
 	})
 	if err != nil {
@@ -23,7 +23,7 @@ func TestBuildWithAttachmentRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if env.Subject != "Hi" || len(env.From) == 0 || env.From[0] != "alice@vmail.test" {
+	if env.Subject != "Hi" || len(env.From) == 0 || env.From[0] != "alice@vulos.to" {
 		t.Errorf("envelope wrong: %+v", env)
 	}
 	if len(env.To) != 1 || env.To[0] != "bob@x.com" {
