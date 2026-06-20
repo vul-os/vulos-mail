@@ -190,6 +190,52 @@
 
   function empty(t) { const e = $("#list-empty"); e.textContent = t; e.hidden = false; }
 
+  // ── contacts ──────────────────────────────────────────────────────
+  let contactsCache = [];
+  async function openContacts() {
+    $("#contacts").hidden = false;
+    $("#contacts-list").innerHTML = '<div class="contacts-empty">Loading…</div>';
+    try { contactsCache = await jmap.contacts(); } catch { contactsCache = []; }
+    renderContacts("");
+    $("#contact-name").focus();
+  }
+  function renderContacts(f) {
+    const ff = (f || "").toLowerCase();
+    const list = contactsCache.filter((c) => !ff || (c.name + " " + c.email).toLowerCase().includes(ff))
+      .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
+    const box = $("#contacts-list");
+    if (!list.length) { box.innerHTML = `<div class="contacts-empty">${contactsCache.length ? "No matches." : "No contacts yet. Add one above."}</div>`; return; }
+    box.innerHTML = "";
+    for (const c of list) {
+      const nm = c.name || c.email.split("@")[0];
+      const row = el("div", "contact",
+        `<div class="avatar" style="background:${avatarColor(c.email)}">${esc(initials(nm))}</div>` +
+        `<div class="contact-meta"><div class="contact-name">${esc(nm)}</div><div class="contact-email">${esc(c.email)}</div></div>` +
+        `<div class="contact-acts">
+           <button class="iconbtn" data-mail title="Compose"><svg viewBox="0 0 24 24" class="ic"><path d="M4 4h16v16H4z"/><path d="m22 6-10 7L2 6"/></svg></button>
+           <button class="iconbtn" data-del title="Delete"><svg viewBox="0 0 24 24" class="ic"><path d="M3 6h18"/><path d="M8 6V4h8v2m1 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button>
+         </div>`);
+      row.querySelector("[data-mail]").onclick = () => { $("#contacts").hidden = true; openCompose({ to: c.email }); };
+      row.querySelector("[data-del]").onclick = async () => { await jmap.delContact(c.id); contactsCache = contactsCache.filter((x) => x.id !== c.id); renderContacts($("#contact-search").value); toast("Contact deleted"); };
+      box.appendChild(row);
+    }
+  }
+  $("#contacts-btn").addEventListener("click", openContacts);
+  $("#contacts-close").addEventListener("click", () => ($("#contacts").hidden = true));
+  $("#contacts").addEventListener("click", (e) => { if (e.target.id === "contacts") $("#contacts").hidden = true; });
+  $("#contact-search").addEventListener("input", (e) => renderContacts(e.target.value));
+  $("#contact-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = $("#contact-name").value.trim(), email = $("#contact-email").value.trim();
+    if (!email) return;
+    try {
+      const r = await jmap.addContact({ name, email });
+      contactsCache.push({ id: r.id, name, email });
+      $("#contact-name").value = ""; $("#contact-email").value = "";
+      renderContacts($("#contact-search").value); toast("Contact added");
+    } catch (ex) { toast(ex.message); }
+  });
+
   // ── multi-select ──────────────────────────────────────────────────
   function toggleSel(row) {
     if (S.selected.has(row.id)) S.selected.delete(row.id); else S.selected.add(row.id);
@@ -466,7 +512,7 @@
       case "s": if (rows[S.sel]) toggleStar(rows[S.sel]); break;
       case "r": if (rows[S.sel]) replyTo(rows[S.sel]); break;
       case "?": toggleShortcuts(true); break;
-      case "Escape": toggleShortcuts(false); break;
+      case "Escape": $("#contacts").hidden = true; $("#settings").hidden = true; toggleShortcuts(false); break;
     }
   });
   function move(d) {
@@ -503,6 +549,7 @@
       { label: "Search mail", k: "/", ic: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>', run: () => $("#search").focus() },
       { label: "Refresh", ic: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>', run: () => $("#refresh").click() },
       { label: "Mark all as read", ic: SYS_ICONS.inbox, run: markAllRead },
+      { label: "Contacts", ic: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/>', run: openContacts },
       { label: "Settings", ic: '<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 0 0-1.7-1l-.4-2.6h-4l-.4 2.6a7 7 0 0 0-1.7 1l-2.3-1-2 3.4L5 11a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7 7 0 0 0 1.7-1l2.3 1 2-3.4-2-1.5a7 7 0 0 0 .1-1z"/>', run: openSettings },
       { label: "Keyboard shortcuts", k: "?", ic: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4"/><path d="M12 17h.01"/>', run: () => toggleShortcuts(true) },
       { label: "Sign out", ic: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>', run: () => $("#logout").click() },

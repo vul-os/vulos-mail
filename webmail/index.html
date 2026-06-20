@@ -51,6 +51,9 @@
     <ul class="labels" id="labels"></ul>
     <div class="sidebar-foot">
       <div class="me" id="me"></div>
+      <button class="iconbtn" id="contacts-btn" title="Contacts">
+        <svg viewBox="0 0 24 24" class="ic"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/></svg>
+      </button>
       <button class="iconbtn" id="settings-btn" title="Settings">
         <svg viewBox="0 0 24 24" class="ic"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 9 19.3a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.7 9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
       </button>
@@ -148,6 +151,23 @@
       <button class="btn btn-ghost" id="set-cancel">Cancel</button>
       <button class="btn btn-primary" id="set-save">Save</button>
     </div>
+  </div>
+</div>
+
+<!-- Contacts -->
+<div class="overlay" id="contacts" hidden>
+  <div class="contacts-card">
+    <div class="contacts-head">
+      <h2>Contacts</h2>
+      <button class="iconbtn" id="contacts-close" title="Close">✕</button>
+    </div>
+    <form id="contact-form" class="contact-add">
+      <input id="contact-name" type="text" placeholder="Name" />
+      <input id="contact-email" type="email" placeholder="email@domain" required />
+      <button class="btn btn-primary" type="submit">Add</button>
+    </form>
+    <input id="contact-search" class="contact-search" type="search" placeholder="Search contacts" />
+    <div class="contacts-list" id="contacts-list"></div>
   </div>
 </div>
 

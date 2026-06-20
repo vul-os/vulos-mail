@@ -65,6 +65,19 @@
       return r.json();
     }
 
+    async contacts() {
+      const r = await fetch(this.base + "/api/webmail/contacts", { headers: this._headers() });
+      return r.ok ? r.json() : [];
+    }
+    async addContact(c) {
+      const r = await fetch(this.base + "/api/webmail/contacts", { method: "POST", headers: this._headers(true), body: JSON.stringify(c) });
+      if (!r.ok) throw new Error("Add failed");
+      return r.json();
+    }
+    async delContact(id) {
+      await fetch(this.base + "/api/webmail/contacts?id=" + encodeURIComponent(id), { method: "DELETE", headers: this._headers() });
+    }
+
     // Authenticated binary fetch (e.g. attachment download) -> Blob.
     async download(path) {
       const r = await fetch(this.base + path, { headers: this._headers() });

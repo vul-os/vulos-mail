@@ -29,6 +29,7 @@ import (
 	"github.com/vul-os/vmail/internal/emailauth"
 	"github.com/vul-os/vmail/internal/eventlog"
 	"github.com/vul-os/vmail/internal/filter"
+	"github.com/vul-os/vmail/internal/ids"
 	"github.com/vul-os/vmail/internal/mailsettings"
 	"github.com/vul-os/vmail/internal/metrics"
 	"github.com/vul-os/vmail/internal/mime"
@@ -167,7 +168,12 @@ func main() {
 		return "", false
 	}
 	caldavBe := caldav.New(davAuth, caldav.NewMemStore())
-	carddavBe := &carddav.Backend{Auth: carddav.Auth(davAuth), Store: carddav.NewMemStore()}
+	contactStore, err := carddav.NewFSStore(dataDir + "/dav/contacts")
+	if err != nil {
+		log.Fatalf("contacts store: %v", err)
+	}
+	carddavBe := &carddav.Backend{Auth: carddav.Auth(davAuth), Store: contactStore}
+	cgen := ids.NewGen()
 	apiKey := env("VMAIL_API_KEY", "")
 	webapiBe := &webapi.Backend{
 		AuthKey: func(k string) (string, bool) { return acct, apiKey != "" && k == apiKey },
@@ -268,6 +274,55 @@ func main() {
 		}
 		w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
 		_, _ = w.Write(a.Data)
+	})
+
+	// Contacts (persistent, shared with the CardDAV server), Basic auth.
+	httpMux.HandleFunc("/api/webmail/contacts", func(w http.ResponseWriter, r *http.Request) {
+		u, p, ok := r.BasicAuth()
+		if !ok {
+			w.Header().Set("WWW-Authenticate", `Basic realm="vmail"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if _, err := mgr.AuthIMAP(u, p); err != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			res, _ := contactStore.List(u)
+			out := make([]map[string]any, 0, len(res))
+			for _, rsc := range res {
+				c := carddav.ParseContact(rsc.Data)
+				out = append(out, map[string]any{"id": rsc.Href, "name": c.Name, "email": c.Email})
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(out)
+		case http.MethodPost:
+			var c carddav.Contact
+			if err := json.NewDecoder(r.Body).Decode(&c); err != nil || c.Email == "" {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			vcf, err := carddav.BuildContact(c)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			href := cgen.New() + ".vcf"
+			if _, err := contactStore.Put(u, href, vcf); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"id":"` + href + `"}`))
+		case http.MethodDelete:
+			_ = contactStore.Delete(u, r.URL.Query().Get("id"))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
 	})
 
 	// Webmail settings (signature + vacation), Basic auth.
