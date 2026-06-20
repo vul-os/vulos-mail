@@ -21,6 +21,7 @@ import (
 	"github.com/vul-os/vmail/internal/blob"
 	"github.com/vul-os/vmail/internal/emailauth"
 	"github.com/vul-os/vmail/internal/filter"
+	"github.com/vul-os/vmail/internal/mailsettings"
 	"github.com/vul-os/vmail/internal/scan"
 	"github.com/vul-os/vmail/internal/server"
 	"github.com/vul-os/vmail/internal/tenant"
@@ -79,6 +80,10 @@ func main() {
 		log.Printf("rspamd spam scanning enabled: %s", rs)
 	}
 	mgr.Inbound = chain
+
+	// Account settings + vacation responder.
+	mgr.Settings = mailsettings.NewStore()
+	mgr.Vacation = mailsettings.NewResponder(0, nil)
 
 	// Multi-tenancy: registry + optional per-tenant daily message quota.
 	mgr.Registry = tenant.NewRegistry()

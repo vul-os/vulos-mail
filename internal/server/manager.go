@@ -25,6 +25,8 @@ import (
 	"github.com/vul-os/vmail/internal/eventlog"
 	"github.com/vul-os/vmail/internal/filter"
 	"github.com/vul-os/vmail/internal/ids"
+	"github.com/vul-os/vmail/internal/mailsettings"
+	"github.com/vul-os/vmail/internal/mime"
 	"github.com/vul-os/vmail/internal/model"
 	"github.com/vul-os/vmail/internal/tenant"
 	"github.com/vul-os/vmail/services/mtaout"
@@ -44,6 +46,9 @@ type Manager struct {
 	// Registry + Quota, if set, enforce per-tenant daily send limits.
 	Registry *tenant.Registry
 	Quota    *tenant.Quota
+	// Settings + Vacation, if set, drive the vacation auto-responder on delivery.
+	Settings *mailsettings.Store
+	Vacation *mailsettings.Responder
 
 	mu       sync.Mutex
 	accounts map[string]*account.Runtime
@@ -131,8 +136,48 @@ func (m *Manager) Deliver(ctx context.Context, rcpt string, raw []byte) error {
 			label = model.LabelSpam
 		}
 	}
-	_, err = rt.Ingest(ctx, raw, []model.LabelID{label}, nil)
-	return err
+	if _, err = rt.Ingest(ctx, raw, []model.LabelID{label}, nil); err != nil {
+		return err
+	}
+	if label == model.LabelInbox {
+		m.maybeVacation(rcpt, raw)
+	}
+	return nil
+}
+
+// maybeVacation sends an out-of-office auto-reply if the recipient has vacation
+// enabled and the incoming message isn't automated/from a daemon, rate-limited
+// per sender.
+func (m *Manager) maybeVacation(account string, raw []byte) {
+	if m.Settings == nil || m.Vacation == nil || m.sched == nil {
+		return
+	}
+	st := m.Settings.Get(account)
+	if !st.Vacation.Enabled {
+		return
+	}
+	env, err := mime.ParseEnvelope(raw)
+	if err != nil || len(env.From) == 0 {
+		return
+	}
+	sender := env.From[0]
+	if sender == "" || strings.EqualFold(sender, account) ||
+		mailsettings.IsAutomated(raw) || mailsettings.IsDaemonAddress(sender) {
+		return
+	}
+	if !m.Vacation.ShouldReply(account, sender) {
+		return
+	}
+	reply := mailsettings.BuildReply(account, sender, st.Vacation.Subject, st.Vacation.Body)
+	m.sched.Enqueue(mtaout.OutMessage{
+		Tenant:     tenantOf(account),
+		FromDomain: tenantOf(account),
+		RcptDomain: tenantOf(sender),
+		From:       account,
+		Rcpts:      []string{sender},
+		Raw:        reply,
+		Class:      mtaout.Transactional,
+	})
 }
 
 // AuthIMAP validates IMAP credentials and returns the account runtime.
