@@ -177,7 +177,16 @@ func main() {
 	imapBe := &imapadapter.Backend{Auth: func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) }}
 	imapSrv := imapadapter.NewServer(imapBe, tlsCfg)
 
-	jmapBe := &jmapadapter.Backend{Auth: func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) }}
+	jmapBe := &jmapadapter.Backend{
+		Auth: func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) },
+		Submit: func(ctx context.Context, account string, raw []byte) error {
+			env, err := mime.ParseEnvelope(raw)
+			if err != nil {
+				return err
+			}
+			return mgr.SendRaw(ctx, account, append(append([]string{}, env.To...), env.Cc...), raw)
+		},
+	}
 
 	// Shared HTTP auth for DAV: validate IMAP creds, return the account id.
 	davAuth := func(u, p string) (string, bool) {

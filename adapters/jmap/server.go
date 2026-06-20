@@ -3,9 +3,10 @@
 // the domain model directly: labels are Mailboxes, flags+label-membership are
 // Email keywords/mailboxIds. This is the protocol the webmail speaks.
 //
-// Scope this wave: Session, Mailbox/get, Email/query (inMailbox filter),
-// Email/get, Email/set (keywords + mailboxIds patch). EmailSubmission/Thread and
-// push are later refinements.
+// Surface: Session, Mailbox/get, Email/query (inMailbox filter), Email/get,
+// Email/set (create draft / keywords + mailboxIds patch / destroy), Identity/get,
+// and EmailSubmission/set (send, with onSuccessUpdateEmail to move Drafts->Sent)
+// with within-request "#creationId" back-references.
 package jmap
 
 import (
@@ -16,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/vul-os/vmail/internal/account"
+	"github.com/vul-os/vmail/internal/compose"
 	"github.com/vul-os/vmail/internal/mime"
 	"github.com/vul-os/vmail/internal/model"
 )
@@ -23,6 +25,9 @@ import (
 // Backend resolves HTTP Basic credentials to an account runtime + account id.
 type Backend struct {
 	Auth func(username, password string) (*account.Runtime, error)
+	// Submit, if set, sends a raw message on behalf of account (for
+	// EmailSubmission/set). Without it, submission fails with forbidden.
+	Submit func(ctx context.Context, account string, raw []byte) error
 }
 
 // Handler returns the JMAP HTTP handler (/jmap/session and /jmap/api).
@@ -102,6 +107,10 @@ func (b *Backend) api(w http.ResponseWriter, r *http.Request, rt *account.Runtim
 		return
 	}
 	responses := make([]json.RawMessage, 0, len(req.MethodCalls))
+	// creationIds maps a "#creationId" (within this request) to the real id it
+	// resolved to, so later method calls can back-reference created objects
+	// (e.g. EmailSubmission referencing an Email created earlier in the request).
+	creationIds := map[string]string{}
 	for _, mc := range req.MethodCalls {
 		var triple []json.RawMessage
 		if err := json.Unmarshal(mc, &triple); err != nil || len(triple) != 3 {
@@ -112,7 +121,7 @@ func (b *Backend) api(w http.ResponseWriter, r *http.Request, rt *account.Runtim
 		_ = json.Unmarshal(triple[2], &callID)
 		args := triple[1]
 
-		result := b.dispatch(rt, accountID, name, args)
+		result := b.dispatch(rt, accountID, name, args, creationIds)
 		responses = append(responses, encodeResponse(result.name, result.body, callID))
 	}
 	writeJSON(w, map[string]any{
@@ -150,7 +159,7 @@ func methodError(typ string) methodResult {
 	return methodResult{name: "error", body: map[string]any{"type": typ}}
 }
 
-func (b *Backend) dispatch(rt *account.Runtime, accountID, name string, args json.RawMessage) methodResult {
+func (b *Backend) dispatch(rt *account.Runtime, accountID, name string, args json.RawMessage, creationIds map[string]string) methodResult {
 	switch name {
 	case "Mailbox/get":
 		return mailboxGet(rt, accountID)
@@ -159,12 +168,24 @@ func (b *Backend) dispatch(rt *account.Runtime, accountID, name string, args jso
 	case "Email/get":
 		return emailGet(rt, accountID, args)
 	case "Email/set":
-		return emailSet(rt, accountID, args)
+		return emailSet(rt, accountID, args, creationIds)
 	case "Identity/get":
 		return identityGet(accountID)
+	case "EmailSubmission/set":
+		return b.emailSubmissionSet(rt, accountID, args, creationIds)
 	default:
 		return methodError("unknownMethod")
 	}
+}
+
+// resolveRef resolves a JMAP id that may be a "#creationId" back-reference.
+func resolveRef(id string, creationIds map[string]string) string {
+	if strings.HasPrefix(id, "#") {
+		if real, ok := creationIds[strings.TrimPrefix(id, "#")]; ok {
+			return real
+		}
+	}
+	return id
 }
 
 // Identity/get (RFC 8621 §6): the account's single send-as identity.
@@ -373,37 +394,206 @@ func keywordMap(m *model.Message) map[string]bool {
 
 // --- Email/set (keywords + mailboxIds patch) ---
 
-func emailSet(rt *account.Runtime, accountID string, args json.RawMessage) methodResult {
+func emailSet(rt *account.Runtime, accountID string, args json.RawMessage, creationIds map[string]string) methodResult {
 	var a struct {
-		Update map[string]map[string]json.RawMessage `json:"update"`
+		Create  map[string]json.RawMessage            `json:"create"`
+		Update  map[string]map[string]json.RawMessage `json:"update"`
+		Destroy []string                              `json:"destroy"`
 	}
 	_ = json.Unmarshal(args, &a)
 
 	ctx := context.Background()
+	created := map[string]any{}
+	notCreated := map[string]any{}
 	updated := map[string]any{}
 	notUpdated := map[string]any{}
-	// Deterministic order for testability.
+	destroyed := []string{}
+
+	// create (e.g. compose a draft) — deterministic order for testability.
+	ckeys := make([]string, 0, len(a.Create))
+	for k := range a.Create {
+		ckeys = append(ckeys, k)
+	}
+	sort.Strings(ckeys)
+	for _, key := range ckeys {
+		id, err := createEmail(ctx, rt, a.Create[key])
+		if err != nil {
+			notCreated[key] = map[string]any{"type": "invalidProperties", "description": err.Error()}
+			continue
+		}
+		creationIds[key] = string(id)
+		created[key] = map[string]any{"id": string(id), "blobId": string(id), "threadId": threadOf(rt, id), "size": sizeOf(rt, id)}
+	}
+
 	ids := make([]string, 0, len(a.Update))
 	for id := range a.Update {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-
-	for _, id := range ids {
-		patch := a.Update[id]
+	for _, raw := range ids {
+		id := resolveRef(raw, creationIds)
+		patch := a.Update[raw]
 		if _, ok := rt.Message(model.ID(id)); !ok {
-			notUpdated[id] = map[string]any{"type": "notFound"}
+			notUpdated[raw] = map[string]any{"type": "notFound"}
 			continue
 		}
 		if err := applyPatch(ctx, rt, model.ID(id), patch); err != nil {
-			notUpdated[id] = map[string]any{"type": "invalidPatch"}
+			notUpdated[raw] = map[string]any{"type": "invalidPatch"}
 			continue
 		}
-		updated[id] = nil
+		updated[raw] = nil
 	}
+
+	for _, raw := range a.Destroy {
+		id := resolveRef(raw, creationIds)
+		if err := rt.Expunge(ctx, model.ID(id)); err == nil {
+			destroyed = append(destroyed, raw)
+		}
+	}
+
 	return methodResult{name: "Email/set", body: map[string]any{
 		"accountId": accountID, "oldState": "0", "newState": "0",
-		"updated": updated, "notUpdated": notUpdated,
+		"created": created, "notCreated": notCreated,
+		"updated": updated, "notUpdated": notUpdated, "destroyed": destroyed,
+	}}
+}
+
+func threadOf(rt *account.Runtime, id model.ID) string {
+	if m, ok := rt.Message(id); ok {
+		return string(m.ThreadID)
+	}
+	return ""
+}
+
+func sizeOf(rt *account.Runtime, id model.ID) int64 {
+	if m, ok := rt.Message(id); ok {
+		return m.Size
+	}
+	return 0
+}
+
+// createEmail builds a MIME message from JMAP Email properties and ingests it
+// (typically a draft). It supports from/to/cc/subject + text/html bodyValues.
+func createEmail(ctx context.Context, rt *account.Runtime, raw json.RawMessage) (model.ID, error) {
+	var e struct {
+		MailboxIds map[string]bool                   `json:"mailboxIds"`
+		Keywords   map[string]bool                   `json:"keywords"`
+		From       []map[string]string               `json:"from"`
+		To         []map[string]string               `json:"to"`
+		Cc         []map[string]string               `json:"cc"`
+		Subject    string                            `json:"subject"`
+		TextBody   []map[string]string               `json:"textBody"`
+		HTMLBody   []map[string]string               `json:"htmlBody"`
+		BodyValues map[string]struct{ Value string } `json:"bodyValues"`
+	}
+	if err := json.Unmarshal(raw, &e); err != nil {
+		return "", err
+	}
+	addr := func(list []map[string]string) []string {
+		out := make([]string, 0, len(list))
+		for _, a := range list {
+			if a["email"] != "" {
+				out = append(out, a["email"])
+			}
+		}
+		return out
+	}
+	bodyFor := func(parts []map[string]string) string {
+		var sb strings.Builder
+		for _, p := range parts {
+			if v, ok := e.BodyValues[p["partId"]]; ok {
+				sb.WriteString(v.Value)
+			}
+		}
+		return sb.String()
+	}
+	var from string
+	if len(e.From) > 0 {
+		from = e.From[0]["email"]
+	}
+	msg := compose.Message{
+		From: from, To: addr(e.To), Cc: addr(e.Cc), Subject: e.Subject,
+		Text: bodyFor(e.TextBody), HTML: bodyFor(e.HTMLBody),
+	}
+	body, err := compose.Build(msg)
+	if err != nil {
+		return "", err
+	}
+	labels := make([]model.LabelID, 0, len(e.MailboxIds))
+	for l, on := range e.MailboxIds {
+		if on {
+			labels = append(labels, model.LabelID(l))
+		}
+	}
+	if len(labels) == 0 {
+		labels = []model.LabelID{model.LabelDrafts}
+	}
+	var flags []model.Flag
+	for kw, on := range e.Keywords {
+		if on {
+			if f := flagForKeyword(kw); f != "" {
+				flags = append(flags, f)
+			}
+		}
+	}
+	return rt.Ingest(ctx, body, labels, flags)
+}
+
+// EmailSubmission/set: send an existing (draft) email, with optional
+// onSuccessUpdateEmail to relabel it (e.g. Drafts -> Sent).
+func (b *Backend) emailSubmissionSet(rt *account.Runtime, accountID string, args json.RawMessage, creationIds map[string]string) methodResult {
+	if b.Submit == nil {
+		return methodError("forbidden")
+	}
+	var a struct {
+		Create map[string]struct {
+			EmailID    string `json:"emailId"`
+			IdentityID string `json:"identityId"`
+		} `json:"create"`
+		OnSuccessUpdateEmail map[string]map[string]json.RawMessage `json:"onSuccessUpdateEmail"`
+	}
+	_ = json.Unmarshal(args, &a)
+
+	ctx := context.Background()
+	created := map[string]any{}
+	notCreated := map[string]any{}
+
+	keys := make([]string, 0, len(a.Create))
+	for k := range a.Create {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		sub := a.Create[key]
+		emailID := resolveRef(sub.EmailID, creationIds)
+		m, ok := rt.Message(model.ID(emailID))
+		if !ok {
+			notCreated[key] = map[string]any{"type": "invalidProperties", "description": "emailId not found"}
+			continue
+		}
+		body, err := rt.Body(ctx, m.BlobRef)
+		if err != nil {
+			notCreated[key] = map[string]any{"type": "serverFail"}
+			continue
+		}
+		if err := b.Submit(ctx, accountID, body); err != nil {
+			notCreated[key] = map[string]any{"type": "forbiddenToSend", "description": err.Error()}
+			continue
+		}
+		creationIds[key] = string(m.ID)
+		created[key] = map[string]any{"id": string(m.ID)}
+
+		// onSuccessUpdateEmail patches are keyed by the submission creationId
+		// (with '#') or the email id; apply to the just-sent email.
+		for k, patch := range a.OnSuccessUpdateEmail {
+			if resolveRef(k, creationIds) == string(m.ID) || k == "#"+key {
+				_ = applyPatch(ctx, rt, model.ID(emailID), patch)
+			}
+		}
+	}
+	return methodResult{name: "EmailSubmission/set", body: map[string]any{
+		"accountId": accountID, "oldState": "0", "newState": "0",
+		"created": created, "notCreated": notCreated,
 	}}
 }
 
