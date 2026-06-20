@@ -66,6 +66,23 @@
     $("#me").textContent = jmap.user || "";
     jmap.getSettings().then((s) => { if (s) S.settings = s; }).catch(() => {});
     loadLabels().then(() => selectLabel("inbox", "Inbox"));
+    startPush();
+  }
+
+  // ── live updates (SSE) ────────────────────────────────────────────
+  let pushReloadT;
+  async function startPush() {
+    try {
+      const token = await jmap.pushToken();
+      const es = new EventSource("/api/webmail/changes?token=" + encodeURIComponent(token));
+      es.onmessage = () => {
+        // Debounced refresh of the current view + label counts. The open message
+        // and selection are preserved by loadList/renderList.
+        clearTimeout(pushReloadT);
+        pushReloadT = setTimeout(() => { loadList(); loadLabels(); }, 400);
+      };
+      es.onerror = () => {}; // EventSource auto-reconnects (server sends retry:)
+    } catch { /* push unavailable; manual refresh still works */ }
   }
 
   // ── settings ──────────────────────────────────────────────────────

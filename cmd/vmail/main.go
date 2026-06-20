@@ -421,6 +421,49 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(dto{Signature: s.Signature, Vacation: vac{s.Vacation.Enabled, s.Vacation.Subject, s.Vacation.Body}})
 	})
+	// Live updates: mint a push token (Basic auth), then stream changes over SSE
+	// (EventSource can't send Authorization headers, hence the token).
+	httpMux.HandleFunc("/api/webmail/pushtoken", func(w http.ResponseWriter, r *http.Request) {
+		u, p, ok := r.BasicAuth()
+		if !ok || func() bool { _, e := mgr.AuthIMAP(u, p); return e != nil }() {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"token":"` + mgr.PushToken(u) + `"}`))
+	})
+	httpMux.HandleFunc("/api/webmail/changes", func(w http.ResponseWriter, r *http.Request) {
+		acct, ok := mgr.AccountForToken(r.URL.Query().Get("token"))
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		fl, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		ch, cancel := mgr.Subscribe(acct)
+		defer cancel()
+		_, _ = w.Write([]byte("retry: 3000\n\n"))
+		fl.Flush()
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ch:
+				_, _ = w.Write([]byte("data: change\n\n"))
+				fl.Flush()
+			case <-time.After(25 * time.Second):
+				_, _ = w.Write([]byte(": ping\n\n"))
+				fl.Flush()
+			}
+		}
+	})
+
 	// Webmail static UI at the root (registered last; longest-prefix routing keeps
 	// the API/DAV/JMAP handlers above taking precedence).
 	if dir := env("VMAIL_WEBMAIL_DIR", "./webmail"); dir != "" {

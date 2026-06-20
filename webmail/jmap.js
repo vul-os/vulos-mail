@@ -55,6 +55,12 @@
     emails(ids, properties) { return this.one("Email/get", { ids, properties }); }
     set(updates) { return this.one("Email/set", { update: updates }); }
 
+    async pushToken() {
+      const r = await fetch(this.base + "/api/webmail/pushtoken", { headers: this._headers() });
+      if (!r.ok) throw new Error("push token failed");
+      return (await r.json()).token;
+    }
+
     async getSettings() {
       const r = await fetch(this.base + "/api/webmail/settings", { headers: this._headers() });
       return r.ok ? r.json() : { signature: "", vacation: { enabled: false } };

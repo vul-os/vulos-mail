@@ -10,6 +10,8 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -59,6 +61,15 @@ type Manager struct {
 	mu       sync.Mutex
 	accounts map[string]*account.Runtime
 	creds    map[string][]byte // address -> bcrypt password hash
+
+	subMu  sync.Mutex
+	subs   map[string]map[chan struct{}]bool // account -> live-update subscribers
+	tokens map[string]pushTok                // opaque push token -> account (EventSource can't send Basic auth)
+}
+
+type pushTok struct {
+	account string
+	expires time.Time
 }
 
 // NewManager creates a manager rooted at dir, using blobs for bodies and sched
@@ -70,7 +81,66 @@ func NewManager(dir string, blobs blob.Store, sched *mtaout.Scheduler) *Manager 
 		Signer:   dkim.NewSigner(),
 		accounts: map[string]*account.Runtime{},
 		creds:    map[string][]byte{},
+		subs:     map[string]map[chan struct{}]bool{},
+		tokens:   map[string]pushTok{},
 	}
+}
+
+// --- live updates (SSE) ---
+
+// notifyAccount wakes every live-update subscriber for an account (non-blocking).
+func (m *Manager) notifyAccount(account string) {
+	account = strings.ToLower(account)
+	m.subMu.Lock()
+	defer m.subMu.Unlock()
+	for ch := range m.subs[account] {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// Subscribe returns a channel that ticks on each change to the account, plus a
+// cancel func to unsubscribe.
+func (m *Manager) Subscribe(account string) (<-chan struct{}, func()) {
+	account = strings.ToLower(account)
+	ch := make(chan struct{}, 1)
+	m.subMu.Lock()
+	if m.subs[account] == nil {
+		m.subs[account] = map[chan struct{}]bool{}
+	}
+	m.subs[account][ch] = true
+	m.subMu.Unlock()
+	return ch, func() {
+		m.subMu.Lock()
+		delete(m.subs[account], ch)
+		m.subMu.Unlock()
+	}
+}
+
+// PushToken mints an opaque short-lived token bound to an account (so an
+// EventSource — which can't send Authorization headers — can authenticate).
+func (m *Manager) PushToken(account string) string {
+	var b [18]byte
+	_, _ = rand.Read(b[:])
+	tok := hex.EncodeToString(b[:])
+	m.subMu.Lock()
+	m.tokens[tok] = pushTok{account: strings.ToLower(account), expires: time.Now().Add(24 * time.Hour)}
+	m.subMu.Unlock()
+	return tok
+}
+
+// AccountForToken resolves a push token to its account.
+func (m *Manager) AccountForToken(tok string) (string, bool) {
+	m.subMu.Lock()
+	defer m.subMu.Unlock()
+	t, ok := m.tokens[tok]
+	if !ok || time.Now().After(t.expires) {
+		delete(m.tokens, tok)
+		return "", false
+	}
+	return t.account, true
 }
 
 // EnsureDKIM loads (or generates + persists) the outbound DKIM key for domain and
@@ -132,7 +202,7 @@ func (m *Manager) account(ctx context.Context, address string) (*account.Runtime
 	if err != nil {
 		return nil, err
 	}
-	rt, err := account.Open(ctx, log, m.blobs, m.gen, nil)
+	rt, err := account.Open(ctx, log, m.blobs, m.gen, func(eventlog.Record) { m.notifyAccount(address) })
 	if err != nil {
 		return nil, err
 	}
