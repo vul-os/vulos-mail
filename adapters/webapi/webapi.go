@@ -79,7 +79,8 @@ func (b *Backend) handleSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "missing or malformed Authorization header")
 		return
 	}
-	if _, ok := b.AuthKey(key); !ok {
+	acct, ok := b.AuthKey(key)
+	if !ok {
 		writeError(w, http.StatusUnauthorized, "invalid API key")
 		return
 	}
@@ -102,6 +103,12 @@ func (b *Backend) handleSend(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(req.Subject) == "" {
 		writeError(w, http.StatusBadRequest, "missing required field: subject")
+		return
+	}
+	// Bind the From address to the key's account: a key may only send as its own
+	// account (no arbitrary-sender spoofing). Parse so "Name <addr>" is accepted.
+	if fromAddr, perr := mail.ParseAddress(req.From); perr != nil || !strings.EqualFold(fromAddr.Address, acct) {
+		writeError(w, http.StatusForbidden, "from address not allowed for this API key")
 		return
 	}
 

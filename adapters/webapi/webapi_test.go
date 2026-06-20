@@ -23,7 +23,7 @@ func newBackend(validKey string, submitErr error, call *submitCall) *Backend {
 	return &Backend{
 		AuthKey: func(apiKey string) (string, bool) {
 			if apiKey == validKey {
-				return "acct-123", true
+				return "alice@example.com", true
 			}
 			return "", false
 		},
@@ -195,7 +195,7 @@ func TestHandleSendSubmitError(t *testing.T) {
 	var call submitCall
 	b := newBackend(validKey, errSubmit, &call)
 
-	body := `{"from":"a@b.com","to":["c@d.com"],"subject":"s","text":"t"}`
+	body := `{"from":"alice@example.com","to":["c@d.com"],"subject":"s","text":"t"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/send", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+validKey)
 	rec := httptest.NewRecorder()
@@ -232,3 +232,23 @@ var errSubmit = errSubmitType("submit failed")
 type errSubmitType string
 
 func (e errSubmitType) Error() string { return string(e) }
+
+// TestHandleSendRejectsFromSpoofing verifies a valid API key cannot send as an
+// address other than its bound account (no arbitrary-sender spoofing).
+func TestHandleSendRejectsFromSpoofing(t *testing.T) {
+	const validKey = "secret-key"
+	var call submitCall
+	b := newBackend(validKey, nil, &call)
+	// validKey is bound to alice@example.com; try to send as someone else.
+	body := `{"from":"ceo@example.com","to":["bob@example.org"],"subject":"s","text":"t"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/send", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+validKey)
+	rec := httptest.NewRecorder()
+	b.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("spoofed from: status = %d, want 403", rec.Code)
+	}
+	if call.from != "" {
+		t.Fatalf("spoofed message must not be submitted, but Submit saw from=%q", call.from)
+	}
+}

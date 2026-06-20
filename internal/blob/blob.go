@@ -82,11 +82,24 @@ func decompress(packed []byte) ([]byte, error) {
 	return zstdDec.DecodeAll(packed, nil)
 }
 
-// hashOf extracts the hex digest from a "sha256:<hex>" ref.
+// hashOf extracts and validates the hex digest from a "sha256:<hex>" ref. It
+// requires exactly 64 lowercase hex chars so a crafted ref (e.g. containing
+// "../" or an absolute path) can never escape the store root when joined into a
+// filesystem path / object key.
 func hashOf(ref model.BlobRef) (string, error) {
-	h := strings.TrimPrefix(string(ref), "sha256:")
-	if len(h) < 2 {
+	s := string(ref)
+	if !strings.HasPrefix(s, "sha256:") {
 		return "", errors.New("blob: malformed ref")
+	}
+	h := strings.TrimPrefix(s, "sha256:")
+	if len(h) != 64 {
+		return "", errors.New("blob: malformed ref")
+	}
+	for i := 0; i < len(h); i++ {
+		c := h[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return "", errors.New("blob: malformed ref")
+		}
 	}
 	return h, nil
 }

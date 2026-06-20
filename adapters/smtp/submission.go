@@ -12,6 +12,7 @@ import (
 	"github.com/vul-os/vulos-mail/internal/abuse"
 	"github.com/vul-os/vulos-mail/internal/account"
 	"github.com/vul-os/vulos-mail/internal/dkim"
+	"github.com/vul-os/vulos-mail/internal/mime"
 	"github.com/vul-os/vulos-mail/internal/model"
 	"github.com/vul-os/vulos-mail/services/mtaout"
 )
@@ -86,6 +87,13 @@ func (s *submitSession) Mail(from string, _ *gosmtp.MailOptions) error {
 	if s.rt == nil {
 		return gosmtp.ErrAuthRequired
 	}
+	// Bind the envelope sender to the authenticated account: an authenticated user
+	// may only send as themselves (prevents spoofing other users/domains, incl.
+	// DKIM-aligned same-domain spoofing). A null sender (<>) is allowed; the
+	// visible From header is still bound in Data.
+	if from != "" && !strings.EqualFold(from, s.account) {
+		return &gosmtp.SMTPError{Code: 550, EnhancedCode: gosmtp.EnhancedCode{5, 7, 1}, Message: "sender address not allowed for this account"}
+	}
 	s.from = from
 	return nil
 }
@@ -104,6 +112,19 @@ func (s *submitSession) Data(r io.Reader) error {
 		return err
 	}
 	ctx := context.Background()
+
+	// Bind the visible From: header to the authenticated account. Recipients and
+	// DMARC alignment key off this header, so without the check an authenticated
+	// user could emit a DKIM-aligned message "From" any address.
+	env, perr := mime.ParseEnvelope(raw)
+	if perr != nil || len(env.From) == 0 || !strings.EqualFold(env.From[0], s.account) {
+		return &gosmtp.SMTPError{Code: 550, EnhancedCode: gosmtp.EnhancedCode{5, 7, 1}, Message: "From header must match the authenticated account"}
+	}
+	// Effective sender: the bound account (envelope may be a null sender).
+	efFrom := s.from
+	if efFrom == "" {
+		efFrom = s.account
+	}
 
 	// Outbound abuse gate (reject-only): protect the shared relay reputation.
 	if s.backend.Abuse != nil {
@@ -126,7 +147,7 @@ func (s *submitSession) Data(r io.Reader) error {
 
 	// DKIM-sign with the From domain's key (aligned signing) before storing/sending.
 	if s.backend.Signer != nil {
-		if signed, err := s.backend.Signer.Sign(domainOf(s.from), raw); err == nil {
+		if signed, err := s.backend.Signer.Sign(domainOf(efFrom), raw); err == nil {
 			raw = signed
 		}
 	}
@@ -145,9 +166,9 @@ func (s *submitSession) Data(r io.Reader) error {
 	for d, rcpts := range byDomain {
 		s.backend.Enqueue(mtaout.OutMessage{
 			Tenant:     s.tenant,
-			FromDomain: domainOf(s.from),
+			FromDomain: domainOf(efFrom),
 			RcptDomain: d,
-			From:       s.from,
+			From:       efFrom,
 			Rcpts:      rcpts,
 			Raw:        raw,
 			Class:      s.backend.Class,

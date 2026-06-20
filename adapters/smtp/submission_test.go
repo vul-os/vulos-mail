@@ -34,7 +34,7 @@ func TestSubmissionStoresSentAndEnqueues(t *testing.T) {
 	var enqueued []mtaout.OutMessage
 	be := &smtpin.SubmitBackend{
 		Auth: func(u, p string) (*account.Runtime, string, error) {
-			if u == "alice" && p == "secret" {
+			if u == "alice@vulos.to" && p == "secret" {
 				return rt, "tenant-a", nil
 			}
 			return nil, "", gosmtp.ErrAuthFailed
@@ -54,7 +54,7 @@ func TestSubmissionStoresSentAndEnqueues(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	if err := c.Auth(sasl.NewPlainClient("", "alice", "secret")); err != nil {
+	if err := c.Auth(sasl.NewPlainClient("", "alice@vulos.to", "secret")); err != nil {
 		t.Fatalf("auth: %v", err)
 	}
 
@@ -129,7 +129,7 @@ func TestSubmissionDKIMSigns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := authSrv.Next([]byte("\x00alice\x00pw")); err != nil { // authzid\0authcid\0passwd
+	if _, _, err := authSrv.Next([]byte("\x00alice@vulos.to\x00pw")); err != nil { // authzid\0authcid\0passwd
 		t.Fatalf("sasl: %v", err)
 	}
 
