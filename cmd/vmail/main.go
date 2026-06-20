@@ -15,9 +15,12 @@ import (
 	imapadapter "github.com/vul-os/vmail/adapters/imap"
 	jmapadapter "github.com/vul-os/vmail/adapters/jmap"
 	smtpin "github.com/vul-os/vmail/adapters/smtp"
+	"github.com/vul-os/vmail/internal/abuse"
 	"github.com/vul-os/vmail/internal/account"
 	"github.com/vul-os/vmail/internal/blob"
 	"github.com/vul-os/vmail/internal/dkim"
+	"github.com/vul-os/vmail/internal/filter"
+	"github.com/vul-os/vmail/internal/scan"
 	"github.com/vul-os/vmail/internal/server"
 	"github.com/vul-os/vmail/services/mtaout"
 )
@@ -66,6 +69,17 @@ func main() {
 		log.Printf("no VMAIL_ACCOUNT/VMAIL_PASSWORD set; no accounts provisioned")
 	}
 
+	// Inbound anti-abuse chain (rspamd if configured).
+	chain := filter.NewChain()
+	if rs := env("RSPAMD_URL", ""); rs != "" {
+		chain.Add(scan.NewRspamd(rs, 8.0))
+		log.Printf("rspamd spam scanning enabled: %s", rs)
+	}
+	mgr.Inbound = chain
+
+	// Outbound abuse filter (rate + recipient-burst auto-suspend).
+	abuseFilter := abuse.New(abuse.Config{})
+
 	// Listeners.
 	mx := smtpin.NewServer(&smtpin.Backend{
 		Deliver:    mgr.Deliver,
@@ -78,7 +92,7 @@ func main() {
 			return dkim.AuthResults(res)
 		},
 	}, mxAddr, domain)
-	sub := smtpin.NewSubmitServer(&smtpin.SubmitBackend{Auth: mgr.AuthSubmit, Enqueue: mgr.Enqueue, Signer: mgr.Signer}, subAddr, domain)
+	sub := smtpin.NewSubmitServer(&smtpin.SubmitBackend{Auth: mgr.AuthSubmit, Enqueue: mgr.Enqueue, Signer: mgr.Signer, Abuse: abuseFilter}, subAddr, domain)
 	imapBe := &imapadapter.Backend{Auth: func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) }}
 	imapSrv := imapadapter.NewServer(imapBe, nil)
 

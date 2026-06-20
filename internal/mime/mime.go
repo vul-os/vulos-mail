@@ -68,6 +68,31 @@ func ExtractText(raw []byte) (string, error) {
 	return sb.String(), nil
 }
 
+// ExtractAttachments returns the decoded bodies of attachment parts (for hash
+// scanning, e.g. CSAM detection).
+func ExtractAttachments(raw []byte) [][]byte {
+	mr, err := gomail.CreateReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil
+	}
+	var out [][]byte
+	for {
+		p, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			break
+		}
+		if _, ok := p.Header.(*gomail.AttachmentHeader); ok {
+			if b, err := io.ReadAll(p.Body); err == nil {
+				out = append(out, b)
+			}
+		}
+	}
+	return out
+}
+
 func addrList(h gomail.Header, key string) []string {
 	al, err := h.AddressList(key)
 	if err != nil {
