@@ -8,10 +8,12 @@ import (
 	"context"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"time"
 
 	imapadapter "github.com/vul-os/vmail/adapters/imap"
+	jmapadapter "github.com/vul-os/vmail/adapters/jmap"
 	smtpin "github.com/vul-os/vmail/adapters/smtp"
 	"github.com/vul-os/vmail/internal/account"
 	"github.com/vul-os/vmail/internal/blob"
@@ -33,6 +35,7 @@ func main() {
 		mxAddr  = env("VMAIL_MX_ADDR", ":2525")
 		subAddr = env("VMAIL_SUBMIT_ADDR", ":2587")
 		imapddr = env("VMAIL_IMAP_ADDR", ":2143")
+		jmapddr = env("VMAIL_JMAP_ADDR", ":2080")
 		acct    = env("VMAIL_ACCOUNT", "")
 		pass    = env("VMAIL_PASSWORD", "")
 	)
@@ -68,6 +71,8 @@ func main() {
 	imapBe := &imapadapter.Backend{Auth: func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) }}
 	imapSrv := imapadapter.NewServer(imapBe, nil)
 
+	jmapBe := &jmapadapter.Backend{Auth: func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) }}
+
 	go serve("mx", mxAddr, mx.ListenAndServe)
 	go serve("submission", subAddr, sub.ListenAndServe)
 	go serve("imap", imapddr, func() error {
@@ -77,6 +82,7 @@ func main() {
 		}
 		return imapSrv.Serve(ln)
 	})
+	go serve("jmap", jmapddr, func() error { return http.ListenAndServe(jmapddr, jmapBe.Handler()) })
 
 	// Outbound scheduler loop.
 	go func() {
@@ -87,7 +93,7 @@ func main() {
 		}
 	}()
 
-	log.Printf("vmail up: domain=%s mx=%s submit=%s imap=%s data=%s", domain, mxAddr, subAddr, imapddr, dataDir)
+	log.Printf("vmail up: domain=%s mx=%s submit=%s imap=%s jmap=%s data=%s", domain, mxAddr, subAddr, imapddr, jmapddr, dataDir)
 	select {} // block forever
 }
 
