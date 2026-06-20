@@ -151,3 +151,17 @@ func TestJMAPSessionAndEmailFlow(t *testing.T) {
 		t.Error("idA should have label work")
 	}
 }
+
+func TestJMAPIdentityGet(t *testing.T) {
+	srv, _ := newServer(t)
+	defer srv.Close()
+	res := apiCall(t, srv, "Identity/get", map[string]any{"accountId": "alice"})
+	list, _ := res["list"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("Identity/get list = %d, want 1", len(list))
+	}
+	id := list[0].(map[string]any)
+	if id["email"] != "alice" || id["id"] != "i0" {
+		t.Errorf("identity wrong: %+v", id)
+	}
+}

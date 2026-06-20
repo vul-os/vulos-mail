@@ -8,12 +8,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"golang.org/x/crypto/acme/autocert"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	imapadapter "github.com/vul-os/vmail/adapters/imap"
@@ -85,6 +87,23 @@ func main() {
 	tlsCfg, err := tlsconf.Config(env("VMAIL_TLS_CERT", ""), env("VMAIL_TLS_KEY", ""), selfSigned...)
 	if err != nil {
 		log.Fatalf("tls: %v", err)
+	}
+	// ACME (Let's Encrypt) for real certs, if configured. Overrides the cert/key
+	// or self-signed config above. Serves HTTP-01 challenges on :80.
+	if domains := env("VMAIL_ACME_DOMAINS", ""); domains != "" {
+		am := &autocert.Manager{
+			Prompt:     autocert.AcceptTOS,
+			Cache:      autocert.DirCache(dataDir + "/acme"),
+			HostPolicy: autocert.HostWhitelist(strings.Split(domains, ",")...),
+			Email:      env("VMAIL_ACME_EMAIL", ""),
+		}
+		tlsCfg = am.TLSConfig()
+		go func() {
+			if err := http.ListenAndServe(":80", am.HTTPHandler(nil)); err != nil {
+				log.Printf("acme http-01: %v", err)
+			}
+		}()
+		log.Printf("ACME enabled for %s (HTTP-01 on :80)", domains)
 	}
 	if tlsCfg != nil {
 		log.Printf("TLS enabled (STARTTLS on SMTP/IMAP, HTTPS on API)")

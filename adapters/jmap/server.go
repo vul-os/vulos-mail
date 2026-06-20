@@ -62,15 +62,19 @@ func writeJSON(w http.ResponseWriter, v any) {
 func (b *Backend) session(w http.ResponseWriter, _ *http.Request, _ *account.Runtime, accountID string) {
 	writeJSON(w, map[string]any{
 		"capabilities": map[string]any{
-			"urn:ietf:params:jmap:core": map[string]any{"maxObjectsInGet": 1000, "maxObjectsInSet": 1000},
-			"urn:ietf:params:jmap:mail": map[string]any{},
+			"urn:ietf:params:jmap:core":       map[string]any{"maxObjectsInGet": 1000, "maxObjectsInSet": 1000},
+			"urn:ietf:params:jmap:mail":       map[string]any{},
+			"urn:ietf:params:jmap:submission": map[string]any{},
 		},
 		"accounts": map[string]any{
 			accountID: map[string]any{
-				"name":                accountID,
-				"isPersonal":          true,
-				"isReadOnly":          false,
-				"accountCapabilities": map[string]any{"urn:ietf:params:jmap:mail": map[string]any{}},
+				"name":       accountID,
+				"isPersonal": true,
+				"isReadOnly": false,
+				"accountCapabilities": map[string]any{
+					"urn:ietf:params:jmap:mail":       map[string]any{},
+					"urn:ietf:params:jmap:submission": map[string]any{},
+				},
 			},
 		},
 		"primaryAccounts": map[string]any{
@@ -156,9 +160,22 @@ func (b *Backend) dispatch(rt *account.Runtime, accountID, name string, args jso
 		return emailGet(rt, accountID, args)
 	case "Email/set":
 		return emailSet(rt, accountID, args)
+	case "Identity/get":
+		return identityGet(accountID)
 	default:
 		return methodError("unknownMethod")
 	}
+}
+
+// Identity/get (RFC 8621 §6): the account's single send-as identity.
+func identityGet(accountID string) methodResult {
+	return methodResult{name: "Identity/get", body: map[string]any{
+		"accountId": accountID, "state": "0", "notFound": []string{},
+		"list": []any{map[string]any{
+			"id": "i0", "name": accountID, "email": accountID,
+			"replyTo": nil, "bcc": nil, "textSignature": "", "htmlSignature": "", "mayDelete": false,
+		}},
+	}}
 }
 
 // --- Mailbox/get ---
