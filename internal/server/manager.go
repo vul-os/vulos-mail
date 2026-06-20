@@ -232,6 +232,21 @@ func (m *Manager) HandleBounce(reportingDomain string, msg mtaout.OutMessage, re
 	_ = m.Deliver(context.Background(), msg.From, bounce)
 }
 
+// GetSettings returns an account's settings (zero value if none/unset).
+func (m *Manager) GetSettings(account string) mailsettings.Settings {
+	if m.Settings == nil {
+		return mailsettings.Settings{}
+	}
+	return m.Settings.Get(account)
+}
+
+// SetSettings stores an account's settings.
+func (m *Manager) SetSettings(account string, s mailsettings.Settings) {
+	if m.Settings != nil {
+		m.Settings.Set(account, s)
+	}
+}
+
 // WebSend composes a plain-text message from the authenticated account, stores a
 // Sent copy, and sends it (DKIM-signed) — the webmail compose path.
 func (m *Manager) WebSend(ctx context.Context, account string, to []string, subject, text string) error {

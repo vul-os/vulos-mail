@@ -208,6 +208,42 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
+	// Webmail settings (signature + vacation), Basic auth.
+	httpMux.HandleFunc("/api/webmail/settings", func(w http.ResponseWriter, r *http.Request) {
+		u, p, ok := r.BasicAuth()
+		if !ok {
+			w.Header().Set("WWW-Authenticate", `Basic realm="vmail"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if _, err := mgr.AuthIMAP(u, p); err != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		type vac struct {
+			Enabled bool   `json:"enabled"`
+			Subject string `json:"subject"`
+			Body    string `json:"body"`
+		}
+		type dto struct {
+			Signature string `json:"signature"`
+			Vacation  vac    `json:"vacation"`
+		}
+		if r.Method == http.MethodPost {
+			var d dto
+			if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			cur := mgr.GetSettings(u)
+			cur.Signature = d.Signature
+			cur.Vacation = mailsettings.Vacation{Enabled: d.Vacation.Enabled, Subject: d.Vacation.Subject, Body: d.Vacation.Body}
+			mgr.SetSettings(u, cur)
+		}
+		s := mgr.GetSettings(u)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(dto{Signature: s.Signature, Vacation: vac{s.Vacation.Enabled, s.Vacation.Subject, s.Vacation.Body}})
+	})
 	// Webmail static UI at the root (registered last; longest-prefix routing keeps
 	// the API/DAV/JMAP handlers above taking precedence).
 	if dir := env("VMAIL_WEBMAIL_DIR", "./webmail"); dir != "" {

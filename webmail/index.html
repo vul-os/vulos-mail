@@ -51,6 +51,9 @@
     <ul class="labels" id="labels"></ul>
     <div class="sidebar-foot">
       <div class="me" id="me"></div>
+      <button class="iconbtn" id="settings-btn" title="Settings">
+        <svg viewBox="0 0 24 24" class="ic"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 9 19.3a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.7 9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
       <button class="iconbtn" id="logout" title="Sign out">
         <svg viewBox="0 0 24 24" class="ic"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
       </button>
@@ -117,6 +120,25 @@
     <h2>Keyboard shortcuts</h2>
     <div class="sc-grid" id="sc-grid"></div>
     <button class="btn btn-ghost" id="sc-close">Close</button>
+  </div>
+</div>
+
+<!-- Settings -->
+<div class="overlay" id="settings" hidden>
+  <div class="settings-card">
+    <h2>Settings</h2>
+    <label class="field"><span>Signature</span><textarea id="set-sig" rows="3" placeholder="-- &#10;Alice · vmail"></textarea></label>
+    <div class="set-section">
+      <label class="switch"><input type="checkbox" id="set-vac" /> <span>Vacation responder</span></label>
+      <div id="set-vac-fields">
+        <label class="field"><span>Subject</span><input id="set-vac-subj" type="text" placeholder="Out of office" /></label>
+        <label class="field"><span>Message</span><textarea id="set-vac-body" rows="3" placeholder="I'm away until…"></textarea></label>
+      </div>
+    </div>
+    <div class="set-actions">
+      <button class="btn btn-ghost" id="set-cancel">Cancel</button>
+      <button class="btn btn-primary" id="set-save">Save</button>
+    </div>
   </div>
 </div>
 

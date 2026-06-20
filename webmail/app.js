@@ -13,6 +13,7 @@
     openId: null,
     filter: "",
     selected: new Set(),
+    settings: { signature: "", vacation: { enabled: false } },
   };
 
   const SYS_ICONS = {
@@ -63,8 +64,36 @@
   function start() {
     $("#login").hidden = true; $("#app").hidden = false;
     $("#me").textContent = jmap.user || "";
+    jmap.getSettings().then((s) => { if (s) S.settings = s; }).catch(() => {});
     loadLabels().then(() => selectLabel("inbox", "Inbox"));
   }
+
+  // ── settings ──────────────────────────────────────────────────────
+  function openSettings() {
+    const s = S.settings || {};
+    $("#set-sig").value = s.signature || "";
+    const v = s.vacation || {};
+    $("#set-vac").checked = !!v.enabled;
+    $("#set-vac-subj").value = v.subject || "";
+    $("#set-vac-body").value = v.body || "";
+    $("#set-vac-fields").classList.toggle("on", !!v.enabled);
+    $("#settings").hidden = false;
+  }
+  function closeSettings() { $("#settings").hidden = true; }
+  $("#settings-btn").addEventListener("click", openSettings);
+  $("#set-cancel").addEventListener("click", closeSettings);
+  $("#settings").addEventListener("click", (e) => { if (e.target.id === "settings") closeSettings(); });
+  $("#set-vac").addEventListener("change", (e) => $("#set-vac-fields").classList.toggle("on", e.target.checked));
+  $("#set-save").addEventListener("click", async () => {
+    const s = {
+      signature: $("#set-sig").value,
+      vacation: { enabled: $("#set-vac").checked, subject: $("#set-vac-subj").value, body: $("#set-vac-body").value },
+    };
+    const btn = $("#set-save"); btn.disabled = true; btn.textContent = "Saving…";
+    try { await jmap.saveSettings(s); S.settings = s; closeSettings(); toast("Settings saved"); }
+    catch (ex) { toast(ex.message); }
+    finally { btn.disabled = false; btn.textContent = "Save"; }
+  });
 
   // ── labels ────────────────────────────────────────────────────────
   async function loadLabels() {
@@ -309,7 +338,8 @@
     $("#compose-dock").appendChild(node);
     if (pre.to) node.querySelector(".c-to").value = pre.to;
     if (pre.subject) node.querySelector(".c-subj").value = pre.subject;
-    if (pre.text) node.querySelector(".c-text").value = pre.text;
+    const sig = S.settings && S.settings.signature ? "\n\n" + S.settings.signature : "";
+    node.querySelector(".c-text").value = (pre.text || "") + sig;
     const head = node.querySelector(".compose-head");
     head.onclick = (e) => { if (e.target.closest(".close,.min")) return; node.classList.toggle("min"); };
     node.querySelector(".close").onclick = () => node.remove();
@@ -411,6 +441,7 @@
       { label: "Search mail", k: "/", ic: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>', run: () => $("#search").focus() },
       { label: "Refresh", ic: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>', run: () => $("#refresh").click() },
       { label: "Mark all as read", ic: SYS_ICONS.inbox, run: markAllRead },
+      { label: "Settings", ic: '<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 0 0-1.7-1l-.4-2.6h-4l-.4 2.6a7 7 0 0 0-1.7 1l-2.3-1-2 3.4L5 11a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7 7 0 0 0 1.7-1l2.3 1 2-3.4-2-1.5a7 7 0 0 0 .1-1z"/>', run: openSettings },
       { label: "Keyboard shortcuts", k: "?", ic: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4"/><path d="M12 17h.01"/>', run: () => toggleShortcuts(true) },
       { label: "Sign out", ic: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>', run: () => $("#logout").click() },
     ];

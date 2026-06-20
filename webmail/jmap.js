@@ -55,6 +55,16 @@
     emails(ids, properties) { return this.one("Email/get", { ids, properties }); }
     set(updates) { return this.one("Email/set", { update: updates }); }
 
+    async getSettings() {
+      const r = await fetch(this.base + "/api/webmail/settings", { headers: this._headers() });
+      return r.ok ? r.json() : { signature: "", vacation: { enabled: false } };
+    }
+    async saveSettings(s) {
+      const r = await fetch(this.base + "/api/webmail/settings", { method: "POST", headers: this._headers(true), body: JSON.stringify(s) });
+      if (!r.ok) throw new Error("Save failed");
+      return r.json();
+    }
+
     // Compose+send via the authenticated webmail endpoint.
     async send(msg) {
       const r = await fetch(this.base + "/api/webmail/send", {
