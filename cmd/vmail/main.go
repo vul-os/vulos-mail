@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net"
 	"net/http"
@@ -165,12 +166,49 @@ func main() {
 		Submit:  mgr.SendRaw,
 	}
 
-	// One HTTP server multiplexing JMAP, CalDAV, CardDAV, and the transactional API.
+	// One HTTP server multiplexing the webmail UI, JMAP, CalDAV, CardDAV, and APIs.
 	httpMux := http.NewServeMux()
 	httpMux.Handle("/jmap/", jmapBe.Handler())
 	httpMux.Handle("/dav/calendars/", caldavBe.Handler())
 	httpMux.Handle("/dav/addressbooks/", carddavBe.Handler())
 	httpMux.Handle("/api/", webapiBe.Handler())
+	// Webmail compose endpoint (Basic auth via the user's IMAP credentials).
+	httpMux.HandleFunc("/api/webmail/send", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		u, p, ok := r.BasicAuth()
+		if !ok {
+			w.Header().Set("WWW-Authenticate", `Basic realm="vmail"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if _, err := mgr.AuthIMAP(u, p); err != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		var req struct {
+			To      []string `json:"to"`
+			Subject string   `json:"subject"`
+			Text    string   `json:"text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.To) == 0 {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if err := mgr.WebSend(r.Context(), u, req.To, req.Subject, req.Text); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
+	// Webmail static UI at the root (registered last; longest-prefix routing keeps
+	// the API/DAV/JMAP handlers above taking precedence).
+	if dir := env("VMAIL_WEBMAIL_DIR", "./webmail"); dir != "" {
+		httpMux.Handle("/", http.FileServer(http.Dir(dir)))
+	}
 
 	go serve("mx", mxAddr, mx.ListenAndServe)
 	go serve("submission", subAddr, sub.ListenAndServe)

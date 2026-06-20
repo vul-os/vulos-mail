@@ -11,10 +11,12 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -228,6 +230,30 @@ func (m *Manager) HandleBounce(reportingDomain string, msg mtaout.OutMessage, re
 	bounce := dsn.Build(reportingDomain, msg.From, msg.Rcpts, reason)
 	// Best-effort local delivery; if the sender isn't local, nothing to do.
 	_ = m.Deliver(context.Background(), msg.From, bounce)
+}
+
+// WebSend composes a plain-text message from the authenticated account, stores a
+// Sent copy, and sends it (DKIM-signed) — the webmail compose path.
+func (m *Manager) WebSend(ctx context.Context, account string, to []string, subject, text string) error {
+	if len(to) == 0 {
+		return errors.New("no recipients")
+	}
+	msgID := m.gen.New() + "@" + tenantOf(account)
+	var b strings.Builder
+	fmt.Fprintf(&b, "From: %s\r\n", account)
+	fmt.Fprintf(&b, "To: %s\r\n", strings.Join(to, ", "))
+	fmt.Fprintf(&b, "Subject: %s\r\n", subject)
+	fmt.Fprintf(&b, "Date: %s\r\n", time.Now().UTC().Format(time.RFC1123Z))
+	fmt.Fprintf(&b, "Message-ID: <%s>\r\n", msgID)
+	b.WriteString("MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n")
+	b.WriteString(text)
+	b.WriteString("\r\n")
+	raw := []byte(b.String())
+
+	if rt, err := m.account(ctx, account); err == nil {
+		_, _ = rt.Ingest(ctx, raw, []model.LabelID{model.LabelSent}, []model.Flag{model.FlagSeen})
+	}
+	return m.SendRaw(ctx, account, to, raw)
 }
 
 // SendRaw accepts a fully-composed message for outbound delivery (used by the

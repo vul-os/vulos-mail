@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/vul-os/vmail/internal/account"
+	"github.com/vul-os/vmail/internal/mime"
 	"github.com/vul-os/vmail/internal/model"
 )
 
@@ -235,9 +236,19 @@ func emailQuery(rt *account.Runtime, accountID string, args json.RawMessage) met
 
 func emailGet(rt *account.Runtime, accountID string, args json.RawMessage) methodResult {
 	var a struct {
-		IDs []string `json:"ids"`
+		IDs        []string `json:"ids"`
+		Properties []string `json:"properties"`
 	}
 	_ = json.Unmarshal(args, &a)
+
+	// Body extraction is lazy: only when the client asks for preview/bodyValues
+	// (it requires fetching + parsing the blob).
+	wantBody := len(a.Properties) == 0
+	for _, p := range a.Properties {
+		if p == "preview" || p == "bodyValues" || p == "textBody" {
+			wantBody = true
+		}
+	}
 
 	var list []any
 	var notFound []string
@@ -247,7 +258,11 @@ func emailGet(rt *account.Runtime, accountID string, args json.RawMessage) metho
 			notFound = append(notFound, id)
 			continue
 		}
-		list = append(list, emailObject(m))
+		obj := emailObject(m)
+		if wantBody {
+			addBody(rt, m, obj)
+		}
+		list = append(list, obj)
 	}
 	return methodResult{name: "Email/get", body: map[string]any{
 		"accountId": accountID, "state": "0", "list": list, "notFound": notFound,
@@ -269,6 +284,29 @@ func emailObject(m *model.Message) map[string]any {
 		"messageId":  []string{m.Envelope.MessageIDHeader},
 	}
 }
+
+// addBody fetches the raw blob, extracts inline text, and adds JMAP preview +
+// bodyValues/textBody to the object.
+func addBody(rt *account.Runtime, m *model.Message, obj map[string]any) {
+	raw, err := rt.Body(context.Background(), m.BlobRef)
+	if err != nil {
+		return
+	}
+	text, err := mime.ExtractText(raw)
+	if err != nil {
+		return
+	}
+	text = strings.TrimSpace(text)
+	preview := text
+	if len(preview) > 240 {
+		preview = preview[:240] + "…"
+	}
+	obj["preview"] = collapseWS(preview)
+	obj["bodyValues"] = map[string]any{"1": map[string]any{"value": text, "isTruncated": false}}
+	obj["textBody"] = []any{map[string]any{"partId": "1", "type": "text/plain"}}
+}
+
+func collapseWS(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 func addrObjs(addrs []string) []map[string]any {
 	out := make([]map[string]any, 0, len(addrs))
