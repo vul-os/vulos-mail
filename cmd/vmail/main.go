@@ -538,6 +538,16 @@ func main() {
 		}
 	}()
 
+	// Periodic log compaction (snapshot + truncate so reopen stays fast).
+	go func() {
+		for {
+			time.Sleep(12 * time.Hour)
+			if n := mgr.CompactAll(context.Background()); n > 0 {
+				log.Printf("log compaction: snapshotted %d accounts", n)
+			}
+		}
+	}()
+
 	// Metrics endpoint.
 	if metricsAddr := env("VMAIL_METRICS_ADDR", ":2090"); metricsAddr != "" {
 		go serve("metrics", metricsAddr, func() error {

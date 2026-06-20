@@ -346,6 +346,24 @@ func (m *Manager) GCBlobs(ctx context.Context, grace time.Duration) (int, error)
 	return n, nil
 }
 
+// CompactAll snapshots + truncates the log of every open account (cheap if the
+// log backend doesn't support snapshots). Returns the number compacted.
+func (m *Manager) CompactAll(ctx context.Context) int {
+	m.mu.Lock()
+	rts := make([]*account.Runtime, 0, len(m.accounts))
+	for _, rt := range m.accounts {
+		rts = append(rts, rt)
+	}
+	m.mu.Unlock()
+	n := 0
+	for _, rt := range rts {
+		if err := rt.Compact(ctx); err == nil {
+			n++
+		}
+	}
+	return n
+}
+
 // HandleBounce generates a DSN for a permanently-failed message and delivers it
 // to the original sender if the sender is local. Wire this to
 // Scheduler.SetOnBounce.

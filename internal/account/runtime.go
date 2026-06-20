@@ -46,7 +46,7 @@ type Runtime struct {
 // threader is re-seeded from the projection so conversation grouping is stable
 // across restarts.
 func Open(ctx context.Context, log eventlog.Log, store blob.Store, gen *ids.Gen, onChange func(eventlog.Record)) (*Runtime, error) {
-	proj, err := projection.Rebuild(ctx, log)
+	proj, err := openProjection(ctx, log)
 	if err != nil {
 		return nil, err
 	}
@@ -59,6 +59,43 @@ func Open(ctx context.Context, log eventlog.Log, store blob.Store, gen *ids.Gen,
 	}
 	th.Seed(seed)
 	return &Runtime{log: log, store: store, ids: gen, threader: th, proj: proj, onChange: onChange, subs: map[chan struct{}]bool{}}, nil
+}
+
+// openProjection restores from a snapshot (if the log supports it) and applies
+// the tail, else rebuilds from the full log.
+func openProjection(ctx context.Context, log eventlog.Log) (*projection.Account, error) {
+	if sn, ok := log.(eventlog.Snapshotter); ok {
+		if data, through, has, err := sn.LoadSnapshot(); err == nil && has {
+			if proj, rerr := projection.Restore(data); rerr == nil {
+				recs, ferr := log.ReadFrom(ctx, through+1)
+				if ferr != nil {
+					return nil, ferr
+				}
+				for _, rec := range recs {
+					proj.Apply(rec)
+				}
+				return proj, nil
+			}
+		}
+	}
+	return projection.Rebuild(ctx, log)
+}
+
+// Compact snapshots the current projection and truncates the consumed log prefix
+// (no-op if the log doesn't support snapshots). Holds the write lock so no append
+// races the truncation.
+func (r *Runtime) Compact(ctx context.Context) error {
+	sn, ok := r.log.(eventlog.Snapshotter)
+	if !ok {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	data, err := r.proj.Snapshot()
+	if err != nil {
+		return err
+	}
+	return sn.SaveSnapshot(r.proj.Seq, data)
 }
 
 func (r *Runtime) notify(rec eventlog.Record) {

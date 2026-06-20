@@ -35,6 +35,13 @@ type Log interface {
 	Len(ctx context.Context) (uint64, error)
 }
 
+// Snapshotter is an optional Log capability: persist a projection snapshot and
+// truncate the consumed log prefix, so reopening doesn't replay the full history.
+type Snapshotter interface {
+	LoadSnapshot() (data []byte, throughSeq uint64, ok bool, err error)
+	SaveSnapshot(throughSeq uint64, data []byte) error
+}
+
 // wireRecord is the on-disk form: the event is stored in its tagged codec form.
 type wireRecord struct {
 	Seq   uint64          `json:"seq"`
@@ -124,6 +131,12 @@ func OpenFile(path string, now func() time.Time) (*File, error) {
 	if n := len(recs); n > 0 {
 		f.seq = recs[n-1].Seq
 	}
+	// A compacted log may have an empty/short tail but a snapshot covering a higher
+	// Seq; the high-water mark must come from the snapshot so new Appends continue
+	// numbering past it (and aren't skipped as already-folded on replay).
+	if _, through, ok, serr := f.LoadSnapshot(); serr == nil && ok && through > f.seq {
+		f.seq = through
+	}
 	return f, nil
 }
 
@@ -174,6 +187,78 @@ func (f *File) Len(_ context.Context) (uint64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.seq, nil
+}
+
+// LoadSnapshot returns the persisted projection snapshot and the Seq it covers,
+// or ok=false if none exists.
+func (f *File) LoadSnapshot() (data []byte, throughSeq uint64, ok bool, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	raw, err := os.ReadFile(f.path + ".snap")
+	if os.IsNotExist(err) {
+		return nil, 0, false, nil
+	}
+	if err != nil {
+		return nil, 0, false, err
+	}
+	var s snapWire
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil, 0, false, err
+	}
+	return s.Data, s.Seq, true, nil
+}
+
+// SaveSnapshot durably writes the snapshot covering throughSeq, then truncates
+// the log to records with Seq > throughSeq. The snapshot is written and fsynced
+// before truncation, so a crash in between leaves the (untruncated) log intact —
+// Open replays it and skips already-folded records by Seq.
+func (f *File) SaveSnapshot(throughSeq uint64, data []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	wire, err := json.Marshal(snapWire{Seq: throughSeq, Data: data})
+	if err != nil {
+		return err
+	}
+	tmp := f.path + ".snap.tmp"
+	if err := os.WriteFile(tmp, wire, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, f.path+".snap"); err != nil {
+		return err
+	}
+
+	// Rewrite the log keeping only records after the snapshot.
+	recs, err := f.readAll()
+	if err != nil {
+		return err
+	}
+	var buf []byte
+	for _, r := range recs {
+		if r.Seq <= throughSeq {
+			continue
+		}
+		w, err := toWire(r)
+		if err != nil {
+			return err
+		}
+		line, err := json.Marshal(w)
+		if err != nil {
+			return err
+		}
+		buf = append(buf, line...)
+		buf = append(buf, '\n')
+	}
+	logTmp := f.path + ".tmp"
+	if err := os.WriteFile(logTmp, buf, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(logTmp, f.path)
+}
+
+type snapWire struct {
+	Seq  uint64 `json:"seq"`
+	Data []byte `json:"data"`
 }
 
 func (f *File) readAll() ([]Record, error) {

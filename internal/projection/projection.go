@@ -8,6 +8,7 @@ package projection
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 
 	"github.com/vul-os/vmail/internal/event"
@@ -39,9 +40,54 @@ func New() *Account {
 	return a
 }
 
+// snapshot is the serializable form of an Account (includes the unexported
+// ingest order). Used by log compaction to avoid replaying the full log.
+type snapshot struct {
+	Seq      uint64                         `json:"seq"`
+	Messages map[model.ID]*model.Message    `json:"messages"`
+	Labels   map[model.LabelID]*model.Label `json:"labels"`
+	Threads  map[model.ID]*model.Thread     `json:"threads"`
+	Order    []model.ID                     `json:"order"`
+}
+
+// Snapshot serializes the folded state (so it can be restored without replaying
+// the whole log).
+func (a *Account) Snapshot() ([]byte, error) {
+	return json.Marshal(snapshot{
+		Seq: a.Seq, Messages: a.Messages, Labels: a.Labels, Threads: a.Threads, Order: a.order,
+	})
+}
+
+// Restore rebuilds an Account from a Snapshot. Apply subsequent (Seq > a.Seq)
+// records to bring it current.
+func Restore(data []byte) (*Account, error) {
+	var s snapshot
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, err
+	}
+	a := New()
+	a.Seq = s.Seq
+	if s.Messages != nil {
+		a.Messages = s.Messages
+	}
+	if s.Labels != nil {
+		a.Labels = s.Labels
+	}
+	if s.Threads != nil {
+		a.Threads = s.Threads
+	}
+	a.order = s.Order
+	return a, nil
+}
+
 // Apply folds one record into the account. Unknown/duplicate operations are
 // handled defensively so replay of any well-formed log converges.
 func (a *Account) Apply(r eventlog.Record) {
+	// Idempotent on Seq: skip records already folded (e.g. when applying the log
+	// tail on top of a restored snapshot, or replaying a not-yet-truncated log).
+	if r.Seq != 0 && r.Seq <= a.Seq {
+		return
+	}
 	switch e := r.Event.(type) {
 	case event.MessageIngested:
 		if _, exists := a.Messages[e.MessageID]; !exists {
