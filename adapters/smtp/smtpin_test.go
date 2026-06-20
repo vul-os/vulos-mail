@@ -60,3 +60,23 @@ func TestSessionDeliversToEachRecipient(t *testing.T) {
 		t.Errorf("after Reset with no rcpts, expected no new deliveries, got %d", len(got))
 	}
 }
+
+// The MX backend prepends an Authentication-Results header when Verify is set.
+func TestMXPrependsAuthResults(t *testing.T) {
+	var delivered string
+	be := &smtpin.Backend{
+		Deliver:    func(_ context.Context, _ string, raw []byte) error { delivered = string(raw); return nil },
+		Verify:     func([]byte) string { return "dkim=pass header.d=vmail.test" },
+		AuthServID: "mx.vmail.test",
+	}
+	sess, _ := be.NewSession(nil)
+	_ = sess.Mail("a@b.com", nil)
+	_ = sess.Rcpt("c@vmail.test", nil)
+	if err := sess.Data(strings.NewReader("Subject: x\r\n\r\nbody\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	want := "Authentication-Results: mx.vmail.test; dkim=pass header.d=vmail.test\r\n"
+	if !strings.HasPrefix(delivered, want) {
+		t.Fatalf("delivered message should start with A-R header; got:\n%q", delivered)
+	}
+}

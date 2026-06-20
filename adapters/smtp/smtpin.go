@@ -19,14 +19,21 @@ type DeliverFunc func(ctx context.Context, rcpt string, raw []byte) error
 // Backend implements gosmtp.Backend.
 type Backend struct {
 	Deliver DeliverFunc
+	// Verify, if set, authenticates a received message (e.g. DKIM) and returns an
+	// Authentication-Results header value; it is prepended before delivery.
+	Verify func(raw []byte) string
+	// AuthServID is the authserv-id placed in the Authentication-Results header
+	// (typically this host's name).
+	AuthServID string
 }
 
 // NewSession starts a new SMTP session.
 func (b *Backend) NewSession(_ *gosmtp.Conn) (gosmtp.Session, error) {
-	return &session{deliver: b.Deliver}, nil
+	return &session{backend: b, deliver: b.Deliver}, nil
 }
 
 type session struct {
+	backend *Backend
 	deliver DeliverFunc
 	from    string
 	rcpts   []string
@@ -49,6 +56,19 @@ func (s *session) Data(r io.Reader) error {
 	raw, err := io.ReadAll(r)
 	if err != nil {
 		return err
+	}
+	// Inbound authentication (DKIM): record results as a top header so downstream
+	// (filters, clients) can see them. Prepending a header at the start of the
+	// message is RFC-valid.
+	if s.backend != nil && s.backend.Verify != nil {
+		if ar := s.backend.Verify(raw); ar != "" {
+			servID := s.backend.AuthServID
+			if servID == "" {
+				servID = "vmail"
+			}
+			hdr := []byte("Authentication-Results: " + servID + "; " + ar + "\r\n")
+			raw = append(hdr, raw...)
+		}
 	}
 	ctx := context.Background()
 	for _, rcpt := range s.rcpts {

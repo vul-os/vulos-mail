@@ -17,6 +17,7 @@ import (
 	smtpin "github.com/vul-os/vmail/adapters/smtp"
 	"github.com/vul-os/vmail/internal/account"
 	"github.com/vul-os/vmail/internal/blob"
+	"github.com/vul-os/vmail/internal/dkim"
 	"github.com/vul-os/vmail/internal/server"
 	"github.com/vul-os/vmail/services/mtaout"
 )
@@ -66,7 +67,17 @@ func main() {
 	}
 
 	// Listeners.
-	mx := smtpin.NewServer(&smtpin.Backend{Deliver: mgr.Deliver}, mxAddr, domain)
+	mx := smtpin.NewServer(&smtpin.Backend{
+		Deliver:    mgr.Deliver,
+		AuthServID: domain,
+		Verify: func(raw []byte) string {
+			res, err := dkim.Verify(raw, nil) // nil => real DNS
+			if err != nil {
+				return ""
+			}
+			return dkim.AuthResults(res)
+		},
+	}, mxAddr, domain)
 	sub := smtpin.NewSubmitServer(&smtpin.SubmitBackend{Auth: mgr.AuthSubmit, Enqueue: mgr.Enqueue, Signer: mgr.Signer}, subAddr, domain)
 	imapBe := &imapadapter.Backend{Auth: func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) }}
 	imapSrv := imapadapter.NewServer(imapBe, nil)

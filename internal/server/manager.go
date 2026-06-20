@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/vul-os/vmail/internal/account"
 	"github.com/vul-os/vmail/internal/blob"
 	"github.com/vul-os/vmail/internal/dkim"
@@ -37,7 +39,7 @@ type Manager struct {
 
 	mu       sync.Mutex
 	accounts map[string]*account.Runtime
-	creds    map[string]string // address -> password (placeholder)
+	creds    map[string][]byte // address -> bcrypt password hash
 }
 
 // NewManager creates a manager rooted at dir, using blobs for bodies and sched
@@ -47,7 +49,7 @@ func NewManager(dir string, blobs blob.Store, sched *mtaout.Scheduler) *Manager 
 		dir: dir, blobs: blobs, gen: ids.NewGen(), sched: sched,
 		Signer:   dkim.NewSigner(),
 		accounts: map[string]*account.Runtime{},
-		creds:    map[string]string{},
+		creds:    map[string][]byte{},
 	}
 }
 
@@ -66,11 +68,16 @@ func (m *Manager) EnsureDKIM(domain, selector string) (string, error) {
 	return txt, nil
 }
 
-// AddAccount registers an address with a password (placeholder provisioning).
-func (m *Manager) AddAccount(address, password string) {
+// AddAccount registers an address with a password (stored bcrypt-hashed).
+func (m *Manager) AddAccount(address, password string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.creds[strings.ToLower(address)] = password
+	m.creds[strings.ToLower(address)] = hash
+	return nil
 }
 
 // account returns the runtime for address, opening (and caching) it on first use.
@@ -141,9 +148,12 @@ func (m *Manager) Enqueue(msg mtaout.OutMessage) {
 
 func (m *Manager) checkCred(username, password string) bool {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	want, ok := m.creds[strings.ToLower(username)]
-	return ok && want == password
+	hash, ok := m.creds[strings.ToLower(username)]
+	m.mu.Unlock()
+	if !ok {
+		return false
+	}
+	return bcrypt.CompareHashAndPassword(hash, []byte(password)) == nil
 }
 
 func tenantOf(address string) string {

@@ -10,4 +10,4 @@ require (
 	github.com/emersion/go-smtp v0.24.0
 )
 
-require golang.org/x/crypto v0.31.0 // indirect
+require golang.org/x/crypto v0.31.0

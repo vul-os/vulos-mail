@@ -54,6 +54,17 @@ func TestSignVerifyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAuthResultsFormat(t *testing.T) {
+	if got := dkim.AuthResults(nil); got != "dkim=none" {
+		t.Errorf("empty = %q, want dkim=none", got)
+	}
+	got := dkim.AuthResults([]dkim.Result{{Domain: "vmail.test", OK: true}, {Domain: "evil.test", OK: false}})
+	want := "dkim=pass header.d=vmail.test; dkim=fail header.d=evil.test"
+	if got != want {
+		t.Errorf("AuthResults = %q, want %q", got, want)
+	}
+}
+
 func TestSignNoKeyPassesThrough(t *testing.T) {
 	s := dkim.NewSigner()
 	raw := []byte("From: x@unknown.test\r\n\r\nhi\r\n")

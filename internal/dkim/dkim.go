@@ -12,6 +12,8 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
+	"fmt"
+	"strings"
 
 	"github.com/emersion/go-msgauth/dkim"
 )
@@ -92,6 +94,23 @@ func Verify(raw []byte, lookupTXT func(domain string) ([]string, error)) ([]Resu
 		out = append(out, Result{Domain: v.Domain, OK: v.Err == nil, Err: v.Err})
 	}
 	return out, nil
+}
+
+// AuthResults formats the DKIM portion of an Authentication-Results header value
+// (RFC 8601), e.g. "dkim=pass header.d=vmail.test".
+func AuthResults(results []Result) string {
+	if len(results) == 0 {
+		return "dkim=none"
+	}
+	parts := make([]string, 0, len(results))
+	for _, r := range results {
+		status := "fail"
+		if r.OK {
+			status = "pass"
+		}
+		parts = append(parts, fmt.Sprintf("dkim=%s header.d=%s", status, r.Domain))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // Aligned reports DMARC-style identifier alignment: a passing DKIM result whose
