@@ -21,6 +21,7 @@ import (
 	"github.com/vul-os/vmail/internal/account"
 	"github.com/vul-os/vmail/internal/blob"
 	"github.com/vul-os/vmail/internal/dkim"
+	"github.com/vul-os/vmail/internal/dsn"
 	"github.com/vul-os/vmail/internal/eventlog"
 	"github.com/vul-os/vmail/internal/filter"
 	"github.com/vul-os/vmail/internal/ids"
@@ -156,6 +157,18 @@ func (m *Manager) Enqueue(msg mtaout.OutMessage) {
 	if m.sched != nil {
 		m.sched.Enqueue(msg)
 	}
+}
+
+// HandleBounce generates a DSN for a permanently-failed message and delivers it
+// to the original sender if the sender is local. Wire this to
+// Scheduler.SetOnBounce.
+func (m *Manager) HandleBounce(reportingDomain string, msg mtaout.OutMessage, reason string) {
+	if msg.From == "" {
+		return
+	}
+	bounce := dsn.Build(reportingDomain, msg.From, msg.Rcpts, reason)
+	// Best-effort local delivery; if the sender isn't local, nothing to do.
+	_ = m.Deliver(context.Background(), msg.From, bounce)
 }
 
 func (m *Manager) checkCred(username, password string) bool {

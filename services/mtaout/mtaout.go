@@ -204,8 +204,17 @@ type Scheduler struct {
 	maxAttempts  int
 	backoff     func(attempt int) time.Duration
 
-	mu    sync.Mutex
-	queue []*queued
+	mu       sync.Mutex
+	queue    []*queued
+	onBounce func(msg OutMessage, reason string)
+}
+
+// SetOnBounce registers a callback invoked when a message is permanently failed
+// (5xx) or exhausts its retries — used to generate a DSN back to the sender.
+func (s *Scheduler) SetOnBounce(fn func(msg OutMessage, reason string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onBounce = fn
 }
 
 type queued struct {
@@ -265,8 +274,12 @@ type TickStats struct {
 // that passes the gates, up to the per-domain cap, handling each result.
 func (s *Scheduler) Tick(ctx context.Context, now time.Time) TickStats {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
+	type bounceEv struct {
+		msg    OutMessage
+		reason string
+	}
+	var bounces []bounceEv
 	perDomain := map[string]int{}
 	var remaining []*queued
 	var st TickStats
@@ -310,6 +323,7 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) TickStats {
 			q.attempts++
 			if q.attempts >= s.maxAttempts {
 				st.Bounced++
+				bounces = append(bounces, bounceEv{q.msg, "too many delivery attempts"})
 				if s.rep != nil {
 					s.rep.RecordBounced(q.msg.Tenant)
 				}
@@ -320,6 +334,11 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) TickStats {
 			}
 		case PermFail:
 			st.Bounced++
+			reason := "permanent delivery failure"
+			if res.Err != nil {
+				reason = res.Err.Error()
+			}
+			bounces = append(bounces, bounceEv{q.msg, reason})
 			if s.rep != nil {
 				s.rep.RecordBounced(q.msg.Tenant)
 			}
@@ -327,5 +346,13 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) TickStats {
 	}
 
 	s.queue = remaining
+	cb := s.onBounce
+	s.mu.Unlock()
+
+	for _, b := range bounces {
+		if cb != nil {
+			cb(b.msg, b.reason)
+		}
+	}
 	return st
 }

@@ -59,6 +59,7 @@ func main() {
 	})
 
 	mgr := server.NewManager(dataDir, blobs, sched)
+	sched.SetOnBounce(func(msg mtaout.OutMessage, reason string) { mgr.HandleBounce(domain, msg, reason) })
 	if txt, err := mgr.EnsureDKIM(domain, "vmail"); err == nil && txt != "" {
 		log.Printf("DKIM: publish TXT at vmail._domainkey.%s :  %s", domain, txt)
 	}
