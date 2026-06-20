@@ -1,22 +1,20 @@
 // Package blob is the content-addressed, compressed, deduplicated object store
-// for immutable message bodies. The FS impl is for dev/tests; an S3 impl is a
-// later drop-in behind the Store interface. Compression is gzip (stdlib) today;
-// zstd (klauspost/compress) is a later swap — the on-disk format is internal and
+// for immutable message bodies. The FS impl is for dev/tests; the S3 impl
+// (see s3.go) is a drop-in behind the Store interface. Compression is zstd
+// (klauspost/compress); the on-disk/object format is internal and
 // integrity-checked on read, so it can change freely.
 package blob
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/vul-os/vmail/internal/model"
 )
 
@@ -37,7 +35,47 @@ func Ref(data []byte) model.BlobRef {
 	return model.BlobRef("sha256:" + hex.EncodeToString(sum[:]))
 }
 
-// FS is a filesystem-backed store. Layout: <root>/<hash[:2]>/<hash>, gzip body.
+// Shared zstd encoder/decoder. klauspost's Encoder and Decoder are safe for
+// concurrent use, so a single package-level instance serves every Put/Get.
+// EncodeAll/DecodeAll are stateless across calls, so this is correct and avoids
+// per-op allocation of the underlying compression state.
+var (
+	zstdEnc *zstd.Encoder
+	zstdDec *zstd.Decoder
+)
+
+func init() {
+	var err error
+	zstdEnc, err = zstd.NewWriter(nil)
+	if err != nil {
+		panic("blob: zstd encoder init: " + err.Error())
+	}
+	zstdDec, err = zstd.NewReader(nil)
+	if err != nil {
+		panic("blob: zstd decoder init: " + err.Error())
+	}
+}
+
+// compress zstd-compresses plaintext into a self-contained frame.
+func compress(plain []byte) []byte {
+	return zstdEnc.EncodeAll(plain, nil)
+}
+
+// decompress reverses compress.
+func decompress(packed []byte) ([]byte, error) {
+	return zstdDec.DecodeAll(packed, nil)
+}
+
+// hashOf extracts the hex digest from a "sha256:<hex>" ref.
+func hashOf(ref model.BlobRef) (string, error) {
+	h := strings.TrimPrefix(string(ref), "sha256:")
+	if len(h) < 2 {
+		return "", errors.New("blob: malformed ref")
+	}
+	return h, nil
+}
+
+// FS is a filesystem-backed store. Layout: <root>/<hash[:2]>/<hash>, zstd body.
 type FS struct {
 	root string
 }
@@ -51,13 +89,15 @@ func NewFS(root string) (*FS, error) {
 }
 
 func (s *FS) path(ref model.BlobRef) (string, error) {
-	h := strings.TrimPrefix(string(ref), "sha256:")
-	if len(h) < 2 {
-		return "", errors.New("blob: malformed ref")
+	h, err := hashOf(ref)
+	if err != nil {
+		return "", err
 	}
 	return filepath.Join(s.root, h[:2], h), nil
 }
 
+// Put compresses and stores data, returning its content-addressed ref. It is
+// idempotent: identical content is stored once.
 func (s *FS) Put(_ context.Context, data []byte) (model.BlobRef, error) {
 	ref := Ref(data)
 	p, err := s.path(ref)
@@ -70,17 +110,10 @@ func (s *FS) Put(_ context.Context, data []byte) (model.BlobRef, error) {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return "", err
 	}
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	if _, err := zw.Write(data); err != nil {
-		return "", err
-	}
-	if err := zw.Close(); err != nil {
-		return "", err
-	}
+	packed := compress(data)
 	// Atomic publish via temp + rename.
 	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, buf.Bytes(), 0o600); err != nil {
+	if err := os.WriteFile(tmp, packed, 0o600); err != nil {
 		return "", err
 	}
 	if err := os.Rename(tmp, p); err != nil {
@@ -90,6 +123,8 @@ func (s *FS) Put(_ context.Context, data []byte) (model.BlobRef, error) {
 	return ref, nil
 }
 
+// Get loads, decompresses, and integrity-checks the blob for ref. It returns
+// ErrNotFound if ref is absent.
 func (s *FS) Get(_ context.Context, ref model.BlobRef) ([]byte, error) {
 	p, err := s.path(ref)
 	if err != nil {
@@ -102,12 +137,7 @@ func (s *FS) Get(_ context.Context, ref model.BlobRef) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	zr, err := gzip.NewReader(bytes.NewReader(raw))
-	if err != nil {
-		return nil, err
-	}
-	defer zr.Close()
-	out, err := io.ReadAll(zr)
+	out, err := decompress(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -117,6 +147,7 @@ func (s *FS) Get(_ context.Context, ref model.BlobRef) ([]byte, error) {
 	return out, nil
 }
 
+// Has reports whether ref is present.
 func (s *FS) Has(_ context.Context, ref model.BlobRef) (bool, error) {
 	p, err := s.path(ref)
 	if err != nil {

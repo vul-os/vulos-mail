@@ -40,6 +40,9 @@ type Manager struct {
 	gen   *ids.Gen
 	sched *mtaout.Scheduler
 
+	// LogOpen opens an account's event log given its directory. Defaults to the
+	// JSONL File log; set to a SQLite opener for the durable DB backend.
+	LogOpen func(dir string) (eventlog.Log, error)
 	// Signer holds outbound DKIM keys (shared with the submission backend).
 	Signer *dkim.Signer
 	// Inbound, if set, scans received mail to route inbox/junk/reject.
@@ -61,6 +64,7 @@ type Manager struct {
 func NewManager(dir string, blobs blob.Store, sched *mtaout.Scheduler) *Manager {
 	return &Manager{
 		dir: dir, blobs: blobs, gen: ids.NewGen(), sched: sched,
+		LogOpen:  func(d string) (eventlog.Log, error) { return eventlog.OpenFile(filepath.Join(d, "log.jsonl"), nil) },
 		Signer:   dkim.NewSigner(),
 		accounts: map[string]*account.Runtime{},
 		creds:    map[string][]byte{},
@@ -109,7 +113,7 @@ func (m *Manager) account(ctx context.Context, address string) (*account.Runtime
 	if err := os.MkdirAll(acctDir, 0o700); err != nil {
 		return nil, err
 	}
-	log, err := eventlog.OpenFile(filepath.Join(acctDir, "log.jsonl"), nil)
+	log, err := m.LogOpen(acctDir)
 	if err != nil {
 		return nil, err
 	}

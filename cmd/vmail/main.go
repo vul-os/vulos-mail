@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/vul-os/vmail/internal/account"
 	"github.com/vul-os/vmail/internal/blob"
 	"github.com/vul-os/vmail/internal/emailauth"
+	"github.com/vul-os/vmail/internal/eventlog"
 	"github.com/vul-os/vmail/internal/filter"
 	"github.com/vul-os/vmail/internal/mailsettings"
 	"github.com/vul-os/vmail/internal/metrics"
@@ -52,9 +54,21 @@ func main() {
 		pass    = env("VMAIL_PASSWORD", "")
 	)
 
-	blobs, err := blob.NewFS(dataDir + "/blobs")
-	if err != nil {
-		log.Fatalf("blob store: %v", err)
+	// Blob store: S3-compatible if configured, else local FS (both zstd + dedup).
+	var blobs blob.Store
+	if ep := env("VMAIL_S3_ENDPOINT", ""); ep != "" {
+		s3, serr := blob.NewS3(context.Background(), ep, env("VMAIL_S3_KEY", ""), env("VMAIL_S3_SECRET", ""), env("VMAIL_S3_BUCKET", "vmail"), env("VMAIL_S3_SSL", "") != "")
+		if serr != nil {
+			log.Fatalf("s3 blob store: %v", serr)
+		}
+		blobs = s3
+		log.Printf("blob store: S3 %s/%s", ep, env("VMAIL_S3_BUCKET", "vmail"))
+	} else {
+		fs, ferr := blob.NewFS(dataDir + "/blobs")
+		if ferr != nil {
+			log.Fatalf("blob store: %v", ferr)
+		}
+		blobs = fs
 	}
 
 	// TLS: bring-your-own cert/key, or self-signed for dev (VMAIL_TLS_SELFSIGNED=1).
@@ -80,6 +94,10 @@ func main() {
 	})
 
 	mgr := server.NewManager(dataDir, blobs, sched)
+	if env("VMAIL_DB", "") == "sqlite" {
+		mgr.LogOpen = func(d string) (eventlog.Log, error) { return eventlog.OpenSQLite(filepath.Join(d, "log.db"), nil) }
+		log.Printf("event log backend: sqlite")
+	}
 	sched.SetOnBounce(func(msg mtaout.OutMessage, reason string) { mgr.HandleBounce(domain, msg, reason) })
 	if txt, err := mgr.EnsureDKIM(domain, "vmail"); err == nil && txt != "" {
 		log.Printf("DKIM: publish TXT at vmail._domainkey.%s :  %s", domain, txt)
