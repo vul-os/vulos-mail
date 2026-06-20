@@ -22,6 +22,7 @@ import (
 	"github.com/vul-os/vmail/internal/blob"
 	"github.com/vul-os/vmail/internal/dkim"
 	"github.com/vul-os/vmail/internal/eventlog"
+	"github.com/vul-os/vmail/internal/filter"
 	"github.com/vul-os/vmail/internal/ids"
 	"github.com/vul-os/vmail/internal/model"
 	"github.com/vul-os/vmail/services/mtaout"
@@ -36,6 +37,8 @@ type Manager struct {
 
 	// Signer holds outbound DKIM keys (shared with the submission backend).
 	Signer *dkim.Signer
+	// Inbound, if set, scans received mail to route inbox/junk/reject.
+	Inbound *filter.Chain
 
 	mu       sync.Mutex
 	accounts map[string]*account.Runtime
@@ -114,7 +117,16 @@ func (m *Manager) Deliver(ctx context.Context, rcpt string, raw []byte) error {
 	if err != nil {
 		return err
 	}
-	_, err = rt.Ingest(ctx, raw, []model.LabelID{model.LabelInbox}, nil)
+	label := model.LabelInbox
+	if m.Inbound != nil {
+		switch v := m.Inbound.Scan(ctx, raw); v.Action {
+		case filter.Reject:
+			return errors.New("message rejected: " + v.Reason)
+		case filter.Junk:
+			label = model.LabelSpam
+		}
+	}
+	_, err = rt.Ingest(ctx, raw, []model.LabelID{label}, nil)
 	return err
 }
 

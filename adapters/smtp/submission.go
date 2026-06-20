@@ -9,6 +9,7 @@ import (
 	"github.com/emersion/go-sasl"
 	gosmtp "github.com/emersion/go-smtp"
 
+	"github.com/vul-os/vmail/internal/abuse"
 	"github.com/vul-os/vmail/internal/account"
 	"github.com/vul-os/vmail/internal/dkim"
 	"github.com/vul-os/vmail/internal/model"
@@ -29,6 +30,9 @@ type SubmitBackend struct {
 	// Signer, if set, DKIM-signs each message with the From domain's key before
 	// it is stored and sent (no key for the domain → sent unsigned).
 	Signer *dkim.Signer
+	// Abuse, if set, enforces per-account outbound limits (rate + recipient
+	// burst → throttle/block/suspend) before a message is enqueued.
+	Abuse *abuse.Filter
 }
 
 func (b *SubmitBackend) NewSession(_ *gosmtp.Conn) (gosmtp.Session, error) {
@@ -53,6 +57,7 @@ type submitSession struct {
 	backend *SubmitBackend
 	rt      *account.Runtime
 	tenant  string
+	account string
 	from    string
 	rcpts   []string
 }
@@ -67,6 +72,7 @@ func (s *submitSession) Auth(string) (sasl.Server, error) {
 		}
 		s.rt = rt
 		s.tenant = tenant
+		s.account = username
 		return nil
 	}), nil
 }
@@ -96,6 +102,18 @@ func (s *submitSession) Data(r io.Reader) error {
 		return err
 	}
 	ctx := context.Background()
+
+	// Outbound abuse gate (reject-only): protect the shared relay reputation.
+	if s.backend.Abuse != nil {
+		switch action, reason := s.backend.Abuse.Check(s.account, len(s.rcpts)); action {
+		case abuse.Throttle:
+			return &gosmtp.SMTPError{Code: 451, Message: "submission throttled: " + reason}
+		case abuse.Block:
+			return &gosmtp.SMTPError{Code: 554, Message: "submission rejected: " + reason}
+		case abuse.Suspend:
+			return &gosmtp.SMTPError{Code: 554, Message: "account suspended: " + reason}
+		}
+	}
 
 	// DKIM-sign with the From domain's key (aligned signing) before storing/sending.
 	if s.backend.Signer != nil {
