@@ -50,6 +50,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check("reading pane shows subject", await page.$(".read-subject") != null);
   check("reading pane shows sender + body", (await page.$(".msg-from")) != null && (await page.$(".msg-body")) != null);
 
+  // ---- XSS: a hostile email (script/img-onerror in sender, subject, body) must
+  //      render as inert escaped text — no script execution, no injected nodes ----
+  const xssClicked = await page.evaluate(() => {
+    const r = [...document.querySelectorAll(".row")].find((e) => e.textContent.includes("XSSPROBE"));
+    if (r) r.click();
+    return !!r;
+  });
+  await page.waitForSelector(".read-subject", { timeout: 4000 }).catch(() => {});
+  await sleep(500);
+  const pwned = await page.evaluate(() => window.__pwn === 1);
+  const injectedNodes = await page.evaluate(() =>
+    document.querySelectorAll(".read-subject script, .read-subject img, .msg-body script, .msg-body img, .msg-from script, .msg-from img").length);
+  check("XSS email renders inert (no script/onerror execution)", xssClicked && !pwned, pwned ? "PAYLOAD EXECUTED" : "");
+  check("email HTML is escaped (no injected script/img nodes)", injectedNodes === 0, `${injectedNodes} injected nodes`);
+
   // ---- star toggle ----
   const starOn = async () => page.$$eval(".row .star.on", (s) => s.length);
   const beforeStar = await starOn();

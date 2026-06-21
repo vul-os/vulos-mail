@@ -40,9 +40,14 @@ echo "== seeding mail =="
 python3 - "$PORT_MX" "$USER" <<'PY'
 import smtplib, sys
 port, user = int(sys.argv[1]), sys.argv[2]
+XSS = "window.__pwn=1"
 mails = [("Dana Okoro <boss@acme.io>","Q3 deck + budget","Hi,\n\nAttached are the numbers.\n\n> earlier question\n> answered here\n\nDana"),
          ("Carol <carol@x.test>","lunch friday?","noon works"),
-         ("GitHub <noreply@github.com>","[vul-os/vulos-mail] CI passed","green build https://github.com/vul-os/vulos-mail")]
+         ("GitHub <noreply@github.com>","[vul-os/vulos-mail] CI passed","green build https://github.com/vul-os/vulos-mail"),
+         # Hostile message: XSS payloads in the display name, subject, and body.
+         (f'"<img src=x onerror={XSS}>" <evil@x.test>',
+          f'XSSPROBE <script>{XSS}</script> <img src=x onerror={XSS}>',
+          f'<img src=x onerror="{XSS}"> and <script>{XSS}</script> done')]
 for frm,subj,body in mails:
     s=smtplib.SMTP("127.0.0.1",port,timeout=15)
     s.sendmail("x@y.io",[user],f"From: {frm}\r\nTo: {user}\r\nSubject: {subj}\r\nDate: Sun, 21 Jun 2026 10:00:00 +0000\r\n\r\n{body}\r\n")
