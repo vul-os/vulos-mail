@@ -70,11 +70,13 @@
   }
 
   // ── live updates (SSE) ────────────────────────────────────────────
-  let pushReloadT;
+  let pushReloadT, pushES;
   async function startPush() {
     try {
+      if (pushES) { pushES.close(); pushES = null; } // never leak a prior stream
       const token = await jmap.pushToken();
       const es = new EventSource("/api/webmail/changes?token=" + encodeURIComponent(token));
+      pushES = es;
       es.onmessage = () => {
         // Debounced refresh of the current view + label counts. The open message
         // and selection are preserved by loadList/renderList.
@@ -397,17 +399,19 @@
     const when = $("#event-when").value;
     if (!summary) return;
     const start = when ? new Date(when).toISOString() : new Date().toISOString();
-    const wasEdit = !!editingEvent;
+    const old = editingEvent;
     try {
-      if (editingEvent) {
-        // edit = delete + re-add (the API has no update verb)
-        await jmap.delEvent(editingEvent.id);
-        eventsCache = eventsCache.filter((x) => x.id !== editingEvent.id);
-      }
+      // Edit = re-add THEN delete the old (the API has no update verb). Add-first
+      // means a failed add never destroys the original; worst case is a transient
+      // duplicate if the delete then fails (recoverable), not data loss.
       const r = await jmap.addEvent({ summary, start, end: "" });
       eventsCache.push({ id: r.id, summary, start, end: "" });
-      closeEventPop(); renderCalendar(); toast(wasEdit ? "Event saved" : "Event added");
-    } catch (ex) { toast(ex.message); }
+      if (old) {
+        await jmap.delEvent(old.id);
+        eventsCache = eventsCache.filter((x) => x.id !== old.id);
+      }
+      closeEventPop(); renderCalendar(); toast(old ? "Event saved" : "Event added");
+    } catch (ex) { renderCalendar(); toast(ex.message); }
   });
 
   // ── multi-select ──────────────────────────────────────────────────
@@ -426,7 +430,7 @@
     bar.innerHTML =
       `<span class="selcount"><b>${S.selected.size}</b> selected</span>` +
       selAct("read", "Mark read", '<path d="M22 6 12 13 2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/>') +
-      selAct("star", "Star", STAR) +
+      selAct("star", "Star", `<path d="${STAR}"/>`) +
       selAct("archive", "Archive", SYS_ICONS.archive) +
       selAct("trash", "Delete", SYS_ICONS.trash) +
       selAct("clear", "Clear", '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
@@ -436,7 +440,8 @@
     bar.querySelector("[data-s=trash]").onclick = () => bulk("trash");
     bar.querySelector("[data-s=clear]").onclick = clearSel;
   }
-  const selAct = (s, t, p) => `<button class="iconbtn" data-s="${s}" title="${t}"><svg viewBox="0 0 24 24" class="ic"><path d="${p}"/></svg></button>`;
+  // `body` is full inner-SVG markup (one or more <path>/<rect> elements).
+  const selAct = (s, t, body) => `<button class="iconbtn" data-s="${s}" title="${t}"><svg viewBox="0 0 24 24" class="ic">${body}</svg></button>`;
 
   async function bulk(kind) {
     const rows = selRows(); if (!rows.length) return;
@@ -703,9 +708,12 @@
       case "s": if (rows[S.sel]) toggleStar(rows[S.sel]); break;
       case "r": if (rows[S.sel]) replyTo(rows[S.sel]); break;
       case "?": toggleShortcuts(true); break;
-      case "Escape":
+      case "Escape": {
+        const dyn = document.querySelector("#calendar .cal-pop:not(#cal-pop)");
+        if (dyn) { dyn.remove(); break; }                       // day-detail popover first
         if (!$("#cal-pop").hidden) { $("#cal-pop").hidden = true; break; }
         $("#contacts").hidden = true; $("#settings").hidden = true; $("#calendar").hidden = true; toggleShortcuts(false); break;
+      }
     }
   });
   function move(d) {
@@ -714,7 +722,8 @@
     highlightRow(true);
   }
   function highlightRow(scroll) {
-    $$(".row").forEach((r) => r.classList.toggle("active", +r.dataset.i === S.sel || (S.rows[S.sel] && r.dataset.id === S.openId)));
+    const vr = visibleRows();
+    $$(".row").forEach((r) => r.classList.toggle("active", +r.dataset.i === S.sel || (vr[S.sel] && r.dataset.id === S.openId)));
     const cur = $(`.row[data-i="${S.sel}"]`);
     if (cur) { cur.classList.add("active"); if (scroll) cur.scrollIntoView({ block: "nearest" }); }
   }
@@ -795,7 +804,10 @@
     if (m.bodyValues) { const v = Object.values(m.bodyValues)[0]; if (v && v.value) return v.value; }
     return m.preview || "";
   }
-  function initials(n) { const p = n.trim().split(/\s+/); return ((p[0] || "")[0] || "?").toUpperCase() + (p[1] ? p[1][0].toUpperCase() : ""); }
+  function initials(n) {
+    const p = (n || "").replace(/[^\p{L}\p{N}\s]/gu, " ").trim().split(/\s+/).filter(Boolean);
+    return ((p[0] || "")[0] || "?").toUpperCase() + (p[1] ? p[1][0].toUpperCase() : "");
+  }
   function avatarColor(seed) {
     let h = 0; for (const c of seed) h = (h * 31 + c.charCodeAt(0)) >>> 0;
     const hues = [[15, 106, 108], [201, 106, 255], [45, 212, 191], [245, 158, 11]];
