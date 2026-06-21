@@ -36,6 +36,7 @@ import (
 	"github.com/vul-os/vulos-mail/internal/metrics"
 	"github.com/vul-os/vulos-mail/internal/mime"
 	"github.com/vul-os/vulos-mail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/seam"
 	"github.com/vul-os/vulos-mail/internal/tenant"
 	"github.com/vul-os/vulos-mail/services/mtaout"
 )
@@ -60,6 +61,18 @@ type Manager struct {
 	// Settings + Vacation, if set, drive the vacation auto-responder on delivery.
 	Settings *mailsettings.Store
 	Vacation *mailsettings.Responder
+
+	// Identity, if set, replaces the built-in in-memory credential map as the
+	// source of truth for authentication, account existence, and provisioning.
+	// Standalone deployments set a file-backed local store; the optional
+	// vulos-cloud adapter sets a cp-backed identity. nil = in-memory creds
+	// (used by tests and ephemeral dev runs).
+	Identity seam.Identity
+	// Plans, if set, supplies per-account entitlements (tier/quota/suspension);
+	// nil = unlimited self-hosted. Usage, if set, sinks metered events; nil =
+	// no-op. Both are populated by the optional cloud adapter.
+	Plans seam.Entitlements
+	Usage seam.Usage
 
 	mu       sync.Mutex
 	accounts map[string]*account.Runtime
@@ -182,8 +195,13 @@ func (m *Manager) EnsureDKIM(domain, selector string) (string, error) {
 	return txt, nil
 }
 
-// AddAccount registers an address with a password (stored bcrypt-hashed).
+// AddAccount registers an address with a password (stored bcrypt-hashed). When
+// an Identity provider is configured it owns provisioning; otherwise the address
+// goes into the in-memory credential map.
 func (m *Manager) AddAccount(address, password string) error {
+	if m.Identity != nil {
+		return m.Identity.Provision(context.Background(), strings.ToLower(address), password)
+	}
 	hash, err := bcrypt.GenerateFromPassword(prehash(password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
@@ -205,6 +223,9 @@ func prehash(password string) []byte {
 // IsLocal reports whether rcpt is a provisioned local account (used by the MX to
 // reject unknown recipients at RCPT time).
 func (m *Manager) IsLocal(rcpt string) bool {
+	if m.Identity != nil {
+		return m.Identity.Exists(strings.ToLower(rcpt))
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	_, ok := m.creds[strings.ToLower(rcpt)]
@@ -219,7 +240,11 @@ func (m *Manager) account(ctx context.Context, address string) (*account.Runtime
 	if rt, ok := m.accounts[address]; ok {
 		return rt, nil
 	}
-	if _, ok := m.creds[address]; !ok {
+	if m.Identity != nil {
+		if !m.Identity.Exists(address) {
+			return nil, errors.New("no such account")
+		}
+	} else if _, ok := m.creds[address]; !ok {
 		return nil, errors.New("no such account")
 	}
 	acctDir := filepath.Join(m.dir, "accounts", safeName(address))
@@ -501,6 +526,9 @@ func (m *Manager) SendRaw(_ context.Context, from string, to []string, raw []byt
 			From: from, Rcpts: rcpts, Raw: raw, Class: mtaout.Transactional,
 		})
 	}
+	if m.Usage != nil {
+		m.Usage.Report(context.Background(), seam.Event{Kind: "send", Account: from, Count: int64(len(to)), Bytes: int64(len(raw))})
+	}
 	return nil
 }
 
@@ -520,13 +548,33 @@ func (m *Manager) CheckQuota(account string, bytes int) error {
 }
 
 func (m *Manager) checkCred(username, password string) bool {
+	if m.Identity != nil {
+		if _, err := m.Identity.Authenticate(context.Background(), strings.ToLower(username), password); err != nil {
+			return false
+		}
+		return !m.suspended(username)
+	}
 	m.mu.Lock()
 	hash, ok := m.creds[strings.ToLower(username)]
 	m.mu.Unlock()
 	if !ok {
 		return false
 	}
-	return bcrypt.CompareHashAndPassword(hash, prehash(password)) == nil
+	if bcrypt.CompareHashAndPassword(hash, prehash(password)) != nil {
+		return false
+	}
+	return !m.suspended(username)
+}
+
+// suspended reports whether an entitlement source marks the account suspended
+// (e.g. a billing lapse signalled by vulos-cloud). No entitlement source → never
+// suspended (the standalone case).
+func (m *Manager) suspended(account string) bool {
+	if m.Plans == nil {
+		return false
+	}
+	plan, err := m.Plans.For(context.Background(), strings.ToLower(account))
+	return err == nil && plan.Suspended
 }
 
 func tenantOf(address string) string {

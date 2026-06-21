@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
@@ -26,6 +27,7 @@ import (
 	"github.com/vul-os/vulos-mail/adapters/webapi"
 	"github.com/vul-os/vulos-mail/caldav"
 	"github.com/vul-os/vulos-mail/carddav"
+	cloud "github.com/vul-os/vulos-mail/integration/cloud"
 	"github.com/vul-os/vulos-mail/internal/abuse"
 	"github.com/vul-os/vulos-mail/internal/account"
 	"github.com/vul-os/vulos-mail/internal/blob"
@@ -39,7 +41,11 @@ import (
 	"github.com/vul-os/vulos-mail/internal/mime"
 	"github.com/vul-os/vulos-mail/internal/model"
 	"github.com/vul-os/vulos-mail/internal/scan"
+	"github.com/vul-os/vulos-mail/internal/seam"
+	"github.com/vul-os/vulos-mail/internal/seam/altcha"
+	seamlocal "github.com/vul-os/vulos-mail/internal/seam/local"
 	"github.com/vul-os/vulos-mail/internal/server"
+	"github.com/vul-os/vulos-mail/internal/signup"
 	"github.com/vul-os/vulos-mail/internal/tenant"
 	"github.com/vul-os/vulos-mail/internal/tlsconf"
 	"github.com/vul-os/vulos-mail/services/mtaout"
@@ -176,11 +182,49 @@ func main() {
 	if txt, err := mgr.EnsureDKIM(domain, "vulos-mail"); err == nil && txt != "" {
 		log.Printf("DKIM: publish TXT at vulos-mail._domainkey.%s :  %s", domain, txt)
 	}
-	if acct != "" && pass != "" {
-		mgr.AddAccount(acct, pass)
-		log.Printf("provisioned account %s", acct)
+	// Identity: standalone by default (a persistent, file-backed local account
+	// store — the OSS self-hosted path), with the optional vulos-cloud adapter
+	// taking over only when VULOS_CP_URL is set. The mail core depends solely on
+	// the seam interfaces; nothing here couples it to vulos-cloud.
+	localID, err := seamlocal.NewIdentity(dataDir)
+	if err != nil {
+		log.Fatalf("account store: %v", err)
+	}
+	mgr.Identity = localID
+	if cp := env("VULOS_CP_URL", ""); cp != "" {
+		c := cloud.New(cp, env("VULOS_CP_SECRET", ""))
+		mgr.Identity = cloud.NewIdentity(c)
+		mgr.Plans = cloud.NewEntitlements(c)
+		mgr.Usage = cloud.NewUsage(c)
+		log.Printf("identity/billing: vulos-cloud control plane (%s)", cp)
 	} else {
-		log.Printf("no VULOS_ACCOUNT/VULOS_PASSWORD set; no accounts provisioned")
+		log.Printf("identity/billing: standalone (local account store, no cloud)")
+	}
+	// Seed the configured account (config is authoritative across restarts). Skip
+	// when cloud owns identity.
+	if acct != "" && pass != "" {
+		if env("VULOS_CP_URL", "") == "" {
+			if err := localID.Upsert(acct, pass); err != nil {
+				log.Fatalf("seed account: %v", err)
+			}
+		}
+		log.Printf("provisioned account %s", acct)
+	} else if localID.Count() == 0 && env("VULOS_CP_URL", "") == "" {
+		log.Printf("no VULOS_ACCOUNT set and no accounts on disk; use self-serve signup at /api/signup")
+	}
+
+	// Self-serve signup: gated by an Altcha proof-of-work challenge (self-hosted,
+	// no external service). Set VULOS_SIGNUP=off to disable public signup.
+	var signupGate seam.SignupGate = seam.OpenGate{}
+	var signupIssuer signup.Issuer
+	if env("VULOS_SIGNUP", "") != "off" {
+		secret := []byte(env("VULOS_ALTCHA_SECRET", ""))
+		if len(secret) == 0 {
+			secret = make([]byte, 32)
+			_, _ = rand.Read(secret)
+		}
+		gate := altcha.New(secret, 100_000)
+		signupGate, signupIssuer = gate, gate
 	}
 
 	// Inbound anti-abuse chain (rspamd if configured).
@@ -264,6 +308,16 @@ func main() {
 
 	// One HTTP server multiplexing the webmail UI, JMAP, CalDAV, CardDAV, and APIs.
 	httpMux := http.NewServeMux()
+	// Self-serve signup (anti-abuse gated) — provisions handle@domain via the
+	// active identity provider. Disabled when VULOS_SIGNUP=off.
+	if env("VULOS_SIGNUP", "") != "off" {
+		signupH := signup.Handler(signup.Config{
+			Domain: domain, Gate: signupGate, Issuer: signupIssuer, Provision: mgr.AddAccount,
+		})
+		httpMux.Handle("/api/signup", signupH)  // exact: create account
+		httpMux.Handle("/api/signup/", signupH) // subtree: /challenge
+		log.Printf("self-serve signup enabled at /api/signup (anti-abuse: altcha PoW)")
+	}
 	httpMux.Handle("/jmap/", jmapBe.Handler())
 	httpMux.Handle("/dav/calendars/", caldavBe.Handler())
 	httpMux.Handle("/dav/addressbooks/", carddavBe.Handler())
