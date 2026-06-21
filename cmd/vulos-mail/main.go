@@ -36,6 +36,7 @@ import (
 	"github.com/vul-os/vulos-mail/internal/eventlog"
 	"github.com/vul-os/vulos-mail/internal/filter"
 	"github.com/vul-os/vulos-mail/internal/ids"
+	"github.com/vul-os/vulos-mail/internal/llm"
 	"github.com/vul-os/vulos-mail/internal/mailsettings"
 	"github.com/vul-os/vulos-mail/internal/metrics"
 	"github.com/vul-os/vulos-mail/internal/mime"
@@ -325,6 +326,28 @@ func main() {
 		httpMux.Handle("/api/signup", signupH)  // exact: create account
 		httpMux.Handle("/api/signup/", signupH) // subtree: /challenge
 		log.Printf("self-serve signup enabled at /api/signup (anti-abuse: altcha PoW)")
+	}
+	// Optional LLM features (summaries, smart replies, …) routed through the
+	// suite's llmux gateway — provider routing + per-account budget + token-cost
+	// metering are handled centrally (billed via cp in a Vulos deployment). Off
+	// unless VULOS_LLMUX_URL is set, so mail stays a pure mail server by default.
+	if lurl := env("VULOS_LLMUX_URL", ""); lurl != "" {
+		staticKey := env("VULOS_LLMUX_KEY", "") // cloud deployments resolve a per-account key from cp instead
+		keyFor := func(string) (string, bool) { return staticKey, staticKey != "" }
+		if px := llm.New(lurl, keyFor); px != nil {
+			llmAuth := func(r *http.Request) (string, bool) {
+				u, p, ok := r.BasicAuth()
+				if !ok {
+					return "", false
+				}
+				if _, err := mgr.AuthIMAP(u, p); err != nil {
+					return "", false
+				}
+				return u, true
+			}
+			httpMux.Handle("/api/llm/", px.Handler("/api/llm", llmAuth))
+			log.Printf("LLM features enabled via llmux at %s", lurl)
+		}
 	}
 	httpMux.Handle("/jmap/", jmapBe.Handler())
 	httpMux.Handle("/dav/calendars/", caldavBe.Handler())
