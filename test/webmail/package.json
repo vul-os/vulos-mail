@@ -1,0 +1,6 @@
+{
+  "name": "vulos-mail-webmail-tests",
+  "private": true,
+  "description": "Headless-browser UI tests for the vulos-mail webmail SPA",
+  "dependencies": { "puppeteer-core": "^23" }
+}
