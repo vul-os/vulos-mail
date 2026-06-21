@@ -1,4 +1,4 @@
-.PHONY: build test race cover vet fullstack fuzz webtest e2e e2e-ext test-all docker-build docker-up smoke
+.PHONY: build test race cover vet fullstack fuzz webtest e2e e2e-ext e2e-acme test-all docker-build docker-up smoke
 
 build:
 	go build -o bin/vulos-mail ./cmd/vulos-mail
@@ -40,9 +40,13 @@ e2e:
 	./test/e2e/run.sh
 
 # Extended Docker matrix: alternate backends (SQLite, S3/minio), rspamd spam
-# scanning, ACME-via-Pebble cert issuance, hard-crash recovery, and load.
+# scanning, hard-crash recovery, and load.
 e2e-ext:
 	./test/e2e/run-ext.sh
+
+# Opt-in best-effort: real ACME cert issuance against a local Pebble CA.
+e2e-acme:
+	./test/e2e/run-acme.sh
 
 # Everything runnable locally: vet, race-checked unit/integration, fuzz, then the
 # Dockerized cross-server ecosystem and the extended backend/ops matrix.

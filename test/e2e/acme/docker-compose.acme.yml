@@ -1,0 +1,47 @@
+# ACME cert-issuance test: a local Pebble (Let's Encrypt's test CA) issues a real
+# cert to mta-acme over the ACME protocol, validated via HTTP-01/TLS-ALPN-01
+# against our private DNS. Proves the autocert path end-to-end.
+networks:
+  acmenet:
+    ipam:
+      config: [{ subnet: 172.30.0.0/16 }]
+
+services:
+  dns:
+    image: coredns/coredns:1.11.1
+    command: ["-conf", "/etc/coredns/Corefile"]
+    volumes:
+      - ./Corefile:/etc/coredns/Corefile:ro
+      - ./db.acme:/etc/coredns/db.acme:ro
+    networks: { acmenet: { ipv4_address: 172.30.0.10 } }
+
+  pebble:
+    image: ghcr.io/letsencrypt/pebble:latest
+    command: ["-config", "/test/config/pebble-config.json", "-dnsserver", "172.30.0.10:53"]
+    environment:
+      PEBBLE_VA_NOSLEEP: "1"
+    volumes:
+      - ./pebble-config.json:/test/config/pebble-config.json:ro
+    networks: { acmenet: { ipv4_address: 172.30.0.20 } }
+    depends_on: [dns]
+
+  mta-acme:
+    build: { context: ../../.., dockerfile: Dockerfile }
+    user: root
+    dns: ["172.30.0.10"]
+    environment:
+      VULOS_DOMAIN: acme.test
+      VULOS_ACCOUNT: u@acme.test
+      VULOS_PASSWORD: pw
+      VULOS_ACME_DOMAINS: acme.test
+      VULOS_ACME_DIRECTORY: https://pebble:14000/dir
+      VULOS_ACME_INSECURE: "1"
+      VULOS_ACME_EMAIL: admin@acme.test
+      VULOS_MX_ADDR: ":25"
+      VULOS_SUBMIT_ADDR: ":587"
+      VULOS_IMAP_ADDR: ":143"
+      VULOS_JMAP_ADDR: ":443"
+      VULOS_METRICS_ADDR: ":9090"
+    networks: { acmenet: { ipv4_address: 172.30.0.30 } }
+    depends_on: [pebble]
+

@@ -1,0 +1,6 @@
+$ORIGIN acme.test.
+$TTL 60
+@   IN SOA ns.acme.test. admin.acme.test. ( 1 60 60 60 60 )
+@   IN NS  ns.acme.test.
+@   IN A   172.30.0.30
+ns  IN A   172.30.0.10

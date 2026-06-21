@@ -1,7 +1,17 @@
-# vulos-mail end-to-end test suite
+# vulos-mail test suite
 
-Two tiers, both runnable on any machine with Go and Docker (OrbStack works as a
-drop-in). Run everything with `make test-all`.
+Runnable on any machine with Go and Docker (OrbStack works as a drop-in). Run
+everything (except the opt-in ACME demo) with `make test-all`.
+
+| Command | What it runs |
+|---|---|
+| `make race` | Go unit/integration suite (63 files), race-checked |
+| `make fuzz` | fuzz the untrusted-input parsers (mail/MIME, log codec, DSN, A-R) |
+| `make webtest` | **headless-Chrome webmail UI suite** (18 checks) |
+| `make e2e` | Dockerized cross-server ecosystem (33 checks) |
+| `make e2e-ext` | extended Docker matrix (SQLite, S3/minio, rspamd, crash, load) |
+| `make e2e-acme` | *opt-in, best-effort:* real ACME issuance vs a local Pebble CA |
+| `make test-all` | vet + race + fuzz + webtest + e2e + e2e-ext |
 
 ## Tier 1 — in-process (offline, fast)
 `make race` / `make fullstack`
@@ -68,9 +78,12 @@ self-contained harness:
   real public IPs with PTR/rDNS, aged IP reputation, feedback loops (FBLs), and
   not being on blocklists. The warmup/reputation *logic* is unit-tested; actual
   inbox placement is not.
-- **Public ACME / Let's Encrypt issuance** — needs a real public domain with
-  reachable :80/:443 and real DNS. (The ACME *wiring* is in place; a local
-  Pebble/step-ca container could exercise the flow but isn't included here.)
+- **Public ACME / Let's Encrypt issuance** — needs a real public domain. The
+  *flow* is now exercised locally via `make e2e-acme` (a Pebble CA on our private
+  DNS issues a cert to the server: directory → account → challenge served by our
+  listeners → validation → issuance). It's opt-in/best-effort: autocert and
+  Pebble's current build disagree on the post-issuance cert *download*, so the
+  run is intermittent — not gated. (autocert works against real Let's Encrypt.)
 - **Real DNS at scale** — DNSSEC, real resolver quirks, propagation. We serve a
   controlled zone instead.
 - **NCMEC reporting + real CSAM hash corpora** — gated by credentials and law;
