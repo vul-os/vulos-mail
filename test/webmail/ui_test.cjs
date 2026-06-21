@@ -4,7 +4,10 @@
 //   BASE_URL                 webmail origin (default http://127.0.0.1:18080)
 //   PUPPETEER_EXECUTABLE_PATH  Chrome/Chromium binary
 //   VULOS_USER / VULOS_PW    login credentials
-const puppeteer = require("puppeteer-core");
+// Use the full puppeteer (bundled Chrome) when available — that's the Docker
+// runner — else puppeteer-core with an explicit Chrome path on the host.
+let puppeteer, bundled = true;
+try { puppeteer = require("puppeteer"); } catch { puppeteer = require("puppeteer-core"); bundled = false; }
 
 const BASE = process.env.BASE_URL || "http://127.0.0.1:18080";
 const CHROME = process.env.PUPPETEER_EXECUTABLE_PATH ||
@@ -20,7 +23,9 @@ const check = (name, ok, detail = "") => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
-  const browser = await puppeteer.launch({ executablePath: CHROME, headless: "new", args: ["--no-sandbox"] });
+  const launchOpts = { headless: "new", args: ["--no-sandbox", "--disable-dev-shm-usage"] };
+  if (!bundled) launchOpts.executablePath = CHROME;
+  const browser = await puppeteer.launch(launchOpts);
   const page = await browser.newPage();
   await page.setViewport({ width: 1440, height: 900 });
   const pageErrors = [];
@@ -36,6 +41,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.waitForFunction(() => { const a = document.querySelector("#app"); return a && !a.hidden; }, { timeout: 10000 });
   await page.waitForSelector(".row", { timeout: 10000 }).catch(() => {});
   check("login → app visible", await page.$("#app") != null);
+
+  // ---- brand logo: the Vulos "V" envelope-flap mark is served, used as the
+  //      brand mark, and set as the favicon ----
+  const logo = await page.evaluate(async () => {
+    const el = document.querySelector(".logo");
+    const bg = el ? getComputedStyle(el).backgroundImage : "";
+    const fav = !!document.querySelector('link[rel="icon"][href*="logo.svg"]');
+    let svg = false;
+    try { const r = await fetch("./logo.svg"); svg = r.ok && (await r.text()).includes("<svg"); } catch {}
+    return { el: !!el, bg: bg.includes("logo.svg"), fav, svg };
+  });
+  check("Vulos Mail logo renders + is the favicon", logo.el && logo.bg && logo.fav && logo.svg, JSON.stringify(logo));
 
   // ---- inbox list ----
   const rowCount = await page.$$eval(".row", (r) => r.length);

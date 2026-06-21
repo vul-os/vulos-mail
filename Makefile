@@ -1,4 +1,4 @@
-.PHONY: build test race cover vet fullstack fuzz webtest e2e e2e-ext e2e-acme test-all docker-build docker-up smoke
+.PHONY: build test race cover vet fullstack fuzz webtest webtest-docker e2e e2e-ext e2e-acme test-all test-docker docker-build docker-up smoke
 
 build:
 	go build -o bin/vulos-mail ./cmd/vulos-mail
@@ -34,6 +34,10 @@ fuzz:
 webtest:
 	./test/webmail/run.sh
 
+# Same webmail UI suite, fully containerized (server + seeder + bundled Chrome).
+webtest-docker:
+	./test/webmail/run-docker.sh
+
 # Full Dockerized ecosystem: private DNS + two mail servers delivering to each
 # other, all protocols, plus real over-the-wire SPF/DKIM/DMARC verification.
 e2e:
@@ -51,6 +55,10 @@ e2e-acme:
 # Everything runnable locally: vet, race-checked unit/integration, fuzz, then the
 # Dockerized cross-server ecosystem and the extended backend/ops matrix.
 test-all: vet race fuzz webtest e2e e2e-ext
+
+# Everything that runs inside Docker (no host Chrome/node needed): cross-server
+# ecosystem + extended backend matrix + the containerized webmail UI suite.
+test-docker: e2e e2e-ext webtest-docker
 
 docker-build:
 	docker build -t vulos-mail:dev .

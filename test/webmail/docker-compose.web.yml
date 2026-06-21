@@ -1,0 +1,35 @@
+# Fully Dockerized webmail UI test: the server + a seeder + a headless-Chrome
+# runner (bundled in the puppeteer image) all in containers — no host deps.
+networks:
+  webnet:
+
+services:
+  mta:
+    build: { context: ../.., dockerfile: Dockerfile }
+    user: root
+    environment:
+      VULOS_DOMAIN: vulos.to
+      VULOS_ACCOUNT: alice@vulos.to
+      VULOS_PASSWORD: pw
+      VULOS_MX_ADDR: ":2525"
+      VULOS_SUBMIT_ADDR: ":2587"
+      VULOS_IMAP_ADDR: ":2143"
+      VULOS_JMAP_ADDR: ":2080"
+      VULOS_METRICS_ADDR: ":2090"
+    networks: [webnet]
+
+  web-seed:
+    image: python:3.12-slim
+    volumes: [./seed.py:/seed.py:ro]
+    command: ["python", "/seed.py", "mta", "2525", "alice@vulos.to"]
+    depends_on: [mta]
+    networks: [webnet]
+
+  web-runner:
+    build: { context: ., dockerfile: web-runner/Dockerfile }
+    environment:
+      BASE_URL: http://mta:2080
+      VULOS_USER: alice@vulos.to
+      VULOS_PW: pw
+    depends_on: [mta]
+    networks: [webnet]
