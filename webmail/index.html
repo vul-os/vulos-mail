@@ -33,6 +33,20 @@
       <button class="btn btn-primary btn-block" type="submit" id="login-btn">Sign in</button>
       <p class="login-err" id="login-err" hidden></p>
     </form>
+    <p class="login-alt">New to Vulos Mail? <a href="#" id="show-signup">Create a free account</a></p>
+    <form id="signup-form" autocomplete="on" hidden>
+      <label class="field">
+        <span>Choose your address</span>
+        <input id="signup-handle" type="text" autocomplete="username" placeholder="yourname" pattern="[a-z0-9][a-z0-9._-]{2,31}" required />
+      </label>
+      <label class="field">
+        <span>Password</span>
+        <input id="signup-pass" type="password" autocomplete="new-password" placeholder="at least 8 characters" minlength="8" required />
+      </label>
+      <button class="btn btn-primary btn-block" type="submit" id="signup-btn">Create free account</button>
+      <p class="login-err" id="signup-err" hidden></p>
+      <p class="login-alt"><a href="#" id="show-login">Back to sign in</a></p>
+    </form>
   </div>
   <div class="login-glow" aria-hidden="true"></div>
 </section>

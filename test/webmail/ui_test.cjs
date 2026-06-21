@@ -83,9 +83,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check("email HTML is escaped (no injected script/img nodes)", injectedNodes === 0, `${injectedNodes} injected nodes`);
 
   // ---- star toggle ----
+  await sleep(400); // let any list re-render (from opening the XSS message) settle
   const starOn = async () => page.$$eval(".row .star.on", (s) => s.length);
   const beforeStar = await starOn();
   await page.hover(".row");
+  await sleep(150);
   await page.click(".row .star");
   await sleep(300);
   check("star toggles on a row", (await starOn()) !== beforeStar);
@@ -171,6 +173,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check("multi-select shows bulk action bar", (await page.$("#selbar")) != null);
 
   check("no uncaught JS errors during the run", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+
+  // ---- self-serve free signup (fresh page): create an account, solve the
+  //      Altcha proof-of-work in-browser, and land signed-in ----
+  const sp = await browser.newPage();
+  await sp.goto(BASE, { waitUntil: "networkidle0" });
+  await sp.waitForSelector("#show-signup", { timeout: 8000 });
+  await sp.click("#show-signup");
+  await sp.waitForFunction(() => { const f = document.querySelector("#signup-form"); return f && !f.hidden; }, { timeout: 3000 });
+  await sp.type("#signup-handle", "freebie");
+  await sp.type("#signup-pass", "supersecret1");
+  await sp.click("#signup-btn");
+  const signedUp = await sp.waitForFunction(() => { const a = document.querySelector("#app"); return a && !a.hidden; }, { timeout: 30000 }).then(() => true).catch(() => false);
+  check("self-serve free signup creates an account + signs in", signedUp);
+  await sp.close();
 
   await browser.close();
   const passed = results.filter(Boolean).length;

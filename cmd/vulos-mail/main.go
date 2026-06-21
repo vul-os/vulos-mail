@@ -223,7 +223,15 @@ func main() {
 			secret = make([]byte, 32)
 			_, _ = rand.Read(secret)
 		}
-		gate := altcha.New(secret, 100_000)
+		// Difficulty: ~50k worst-case hashes — a meaningful per-signup deterrent,
+		// ~1–2s for a real browser to solve, tunable via VULOS_ALTCHA_DIFFICULTY.
+		difficulty := 50_000
+		if d := env("VULOS_ALTCHA_DIFFICULTY", ""); d != "" {
+			if n, e := strconv.Atoi(d); e == nil && n > 0 {
+				difficulty = n
+			}
+		}
+		gate := altcha.New(secret, difficulty)
 		signupGate, signupIssuer = gate, gate
 	}
 

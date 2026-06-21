@@ -81,11 +81,19 @@ type Manager struct {
 	subMu  sync.Mutex
 	subs   map[string]map[chan struct{}]bool // account -> live-update subscribers
 	tokens map[string]pushTok                // opaque push token -> account (EventSource can't send Basic auth)
+
+	sendMu sync.Mutex
+	sends  map[string]*daySend // account -> today's send count (plan/tier enforcement)
 }
 
 type pushTok struct {
 	account string
 	expires time.Time
+}
+
+type daySend struct {
+	day string
+	n   int
 }
 
 // NewManager creates a manager rooted at dir, using blobs for bodies and sched
@@ -97,6 +105,7 @@ func NewManager(dir string, blobs blob.Store, sched *mtaout.Scheduler) *Manager 
 		Signer:   dkim.NewSigner(),
 		accounts: map[string]*account.Runtime{},
 		creds:    map[string][]byte{},
+		sends:    map[string]*daySend{},
 		subs:     map[string]map[chan struct{}]bool{},
 		tokens:   map[string]pushTok{},
 	}
@@ -534,6 +543,12 @@ func (m *Manager) SendRaw(_ context.Context, from string, to []string, raw []byt
 
 // CheckQuota enforces the sending account's tenant daily quota (no-op if unset).
 func (m *Manager) CheckQuota(account string, bytes int) error {
+	// Plan/tier enforcement (when an entitlement source is configured): honor
+	// suspension and the per-account daily send cap. This is the shared chokepoint
+	// for every send path (submission, JMAP, webapi, webmail).
+	if err := m.allowPlanSend(account); err != nil {
+		return err
+	}
 	if m.Quota == nil {
 		return nil
 	}
@@ -548,11 +563,13 @@ func (m *Manager) CheckQuota(account string, bytes int) error {
 }
 
 func (m *Manager) checkCred(username, password string) bool {
+	// Login only authenticates — a billing lapse blocks sending (see
+	// allowPlanSend), not reading, so a lapsed user can still reach their mail. A
+	// hard (abuse/admin) suspension is enforced upstream by the identity provider
+	// (cp's /api/mail/auth refuses the credential).
 	if m.Identity != nil {
-		if _, err := m.Identity.Authenticate(context.Background(), strings.ToLower(username), password); err != nil {
-			return false
-		}
-		return !m.suspended(username)
+		_, err := m.Identity.Authenticate(context.Background(), strings.ToLower(username), password)
+		return err == nil
 	}
 	m.mu.Lock()
 	hash, ok := m.creds[strings.ToLower(username)]
@@ -560,21 +577,41 @@ func (m *Manager) checkCred(username, password string) bool {
 	if !ok {
 		return false
 	}
-	if bcrypt.CompareHashAndPassword(hash, prehash(password)) != nil {
-		return false
-	}
-	return !m.suspended(username)
+	return bcrypt.CompareHashAndPassword(hash, prehash(password)) == nil
 }
 
-// suspended reports whether an entitlement source marks the account suspended
-// (e.g. a billing lapse signalled by vulos-cloud). No entitlement source → never
-// suspended (the standalone case).
-func (m *Manager) suspended(account string) bool {
+// allowPlanSend enforces the account's entitlement at send time: a suspended
+// account cannot send, and an account with a daily send cap is held to it. With
+// no entitlement source (standalone) this is a no-op. Entitlement-lookup errors
+// fail OPEN — a cp blip must never wedge the send path.
+func (m *Manager) allowPlanSend(account string) error {
 	if m.Plans == nil {
-		return false
+		return nil
 	}
 	plan, err := m.Plans.For(context.Background(), strings.ToLower(account))
-	return err == nil && plan.Suspended
+	if err != nil {
+		return nil // fail-open on entitlement-source error
+	}
+	if plan.Suspended {
+		return errors.New("account suspended")
+	}
+	if plan.MaxSendPerDay <= 0 {
+		return nil // unlimited
+	}
+	today := time.Now().UTC().Format("2006-01-02")
+	key := strings.ToLower(account)
+	m.sendMu.Lock()
+	defer m.sendMu.Unlock()
+	ds := m.sends[key]
+	if ds == nil || ds.day != today {
+		ds = &daySend{day: today}
+		m.sends[key] = ds
+	}
+	if ds.n >= plan.MaxSendPerDay {
+		return errors.New("daily send limit reached")
+	}
+	ds.n++
+	return nil
 }
 
 func tenantOf(address string) string {

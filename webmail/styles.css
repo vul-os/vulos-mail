@@ -86,6 +86,9 @@ kbd{
 .field input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
 .login-form .btn{margin-top:8px}
 .login-err{color:var(--danger);font-size:12.5px;margin-top:12px;text-align:center}
+.login-alt{color:var(--text-muted);font-size:12.5px;margin-top:18px;text-align:center}
+.login-alt a{color:var(--brand);text-decoration:none}
+.login-alt a:hover{text-decoration:underline}
 
 /* ═══════════════ App grid ═══════════════ */
 .app{display:grid;grid-template-columns:var(--sidebar-w) var(--list-w) 1fr;height:100vh;

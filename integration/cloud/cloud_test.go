@@ -3,7 +3,6 @@ package cloud_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -23,19 +22,22 @@ func TestDisabledWhenNoURL(t *testing.T) {
 
 func TestCloudAdapterAgainstStub(t *testing.T) {
 	ctx := context.Background()
-	var sawAuth, sawMetered bool
+	var sawAuth, sawMetered, sawSignup bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Relay-Auth") != "shh" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 		switch r.URL.Path {
+		case "/api/mail/signup":
+			sawSignup = true
+			w.WriteHeader(http.StatusOK)
 		case "/api/mail/auth":
 			sawAuth = true
 			_ = json.NewEncoder(w).Encode(map[string]string{"account": "alice@vulos.to"})
-		case "/api/quota":
+		case "/api/entitlements":
 			_ = json.NewEncoder(w).Encode(map[string]any{"tier": "pro", "max_send_per_day": 500, "suspended": false})
-		case "/api/metered":
+		case "/api/usage":
 			sawMetered = true
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -51,8 +53,8 @@ func TestCloudAdapterAgainstStub(t *testing.T) {
 	if err != nil || acct != "alice@vulos.to" || !sawAuth {
 		t.Fatalf("authenticate = %q, %v (sawAuth=%v)", acct, err, sawAuth)
 	}
-	if err := id.Provision(ctx, "x@vulos.to", "pw"); !errors.Is(err, seam.ErrUnsupported) {
-		t.Fatalf("Provision should be unsupported (cp owns signup), got %v", err)
+	if err := id.Provision(ctx, "newuser@vulos.to", "pw12345678"); err != nil || !sawSignup {
+		t.Fatalf("Provision should create a free cp account: err=%v sawSignup=%v", err, sawSignup)
 	}
 
 	plan, err := cloud.NewEntitlements(c).For(ctx, "alice@vulos.to")

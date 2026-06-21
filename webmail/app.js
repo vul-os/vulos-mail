@@ -61,6 +61,46 @@
   });
   $("#logout").addEventListener("click", () => { sessionStorage.removeItem("vulos-mail.auth"); location.reload(); });
 
+  // ── self-serve signup (free account) ──────────────────────────────────
+  const showSignupView = () => { $("#login-form").hidden = true; $("#show-signup").parentElement.hidden = true; $("#signup-form").hidden = false; $("#signup-handle").focus(); };
+  const showLoginView = () => { $("#signup-form").hidden = true; $("#login-form").hidden = false; $("#show-signup").parentElement.hidden = false; };
+  $("#show-signup").addEventListener("click", (e) => { e.preventDefault(); showSignupView(); });
+  $("#show-login").addEventListener("click", (e) => { e.preventDefault(); showLoginView(); });
+
+  // Solve an Altcha proof-of-work challenge: find n with SHA-256(salt+n)==challenge.
+  async function solveAltcha(ch) {
+    const enc = new TextEncoder();
+    for (let n = 0; n <= ch.maxnumber; n++) {
+      const buf = await crypto.subtle.digest("SHA-256", enc.encode(ch.salt + n));
+      const hex = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+      if (hex === ch.challenge) {
+        return btoa(JSON.stringify({ algorithm: ch.algorithm, challenge: ch.challenge, number: n, salt: ch.salt, signature: ch.signature }));
+      }
+    }
+    throw new Error("could not solve challenge");
+  }
+
+  $("#signup-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const handle = $("#signup-handle").value.trim().toLowerCase(), pass = $("#signup-pass").value;
+    const btn = $("#signup-btn"), err = $("#signup-err");
+    err.hidden = true; btn.disabled = true; btn.textContent = "Creating account…";
+    try {
+      const ch = await fetch("/api/signup/challenge").then((r) => { if (!r.ok) throw new Error("signup unavailable"); return r.json(); });
+      const solution = await solveAltcha(ch);
+      const res = await fetch("/api/signup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ handle, password: pass, solution }) });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || "could not create account"); }
+      const { address } = await res.json();
+      // Seamlessly sign in to the new account.
+      showLoginView();
+      $("#login-user").value = address; $("#login-pass").value = pass;
+      $("#login-form").requestSubmit();
+    } catch (ex) {
+      err.textContent = ex.message; err.hidden = false;
+      btn.disabled = false; btn.textContent = "Create free account";
+    }
+  });
+
   function start() {
     $("#login").hidden = true; $("#app").hidden = false;
     $("#me").textContent = jmap.user || "";

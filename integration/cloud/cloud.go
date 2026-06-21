@@ -116,8 +116,13 @@ func (i *Identity) Exists(account string) bool {
 	return out.Exists
 }
 
-// Provision is owned by cp's signup flow, not by mail.
-func (i *Identity) Provision(context.Context, string, string) error { return seam.ErrUnsupported }
+// Provision creates a new FREE account in cp (the "sign up via Vulos Mail" flow):
+// the @vulos.to address becomes the cp identity. cp assigns the free tier and
+// owns reserved-handle/abuse policy; mail's signup gate has already run.
+func (i *Identity) Provision(ctx context.Context, account, password string) error {
+	return i.c.do(ctx, http.MethodPost, "/api/mail/signup",
+		map[string]string{"account": strings.ToLower(account), "password": password}, nil)
+}
 
 // --- seam.Entitlements ---
 
@@ -141,7 +146,7 @@ func (e *Entitlements) For(ctx context.Context, account string) (seam.Plan, erro
 		MaxAddresses  int    `json:"max_addresses"`
 		Suspended     bool   `json:"suspended"`
 	}
-	if err := e.c.do(ctx, http.MethodGet, "/api/quota?kind=mail&account_id="+url.QueryEscape(strings.ToLower(account)), nil, &out); err != nil {
+	if err := e.c.do(ctx, http.MethodGet, "/api/entitlements?product=mail&account_id="+url.QueryEscape(strings.ToLower(account)), nil, &out); err != nil {
 		return seam.Plan{}, err
 	}
 	return seam.Plan{
@@ -164,10 +169,11 @@ func NewUsage(c *Client) *Usage {
 	return &Usage{c: c}
 }
 
-// Report posts the event to cp's metered_events ingest, best-effort.
+// Report posts the event to cp's usage ingest, best-effort.
 func (u *Usage) Report(ctx context.Context, ev seam.Event) {
-	_ = u.c.do(ctx, http.MethodPost, "/api/metered", map[string]any{
-		"kind": ev.Kind, "account_id": ev.Account, "count": ev.Count, "bytes": ev.Bytes,
+	_ = u.c.do(ctx, http.MethodPost, "/api/usage", map[string]any{
+		"product": "mail", "kind": ev.Kind, "account_id": ev.Account,
+		"count": ev.Count, "bytes": ev.Bytes,
 	}, nil)
 }
 
