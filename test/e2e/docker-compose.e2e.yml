@@ -69,12 +69,34 @@ services:
         ipv4_address: 172.28.0.30
     depends_on: [dns]
 
+  # TLS instance: self-signed STARTTLS (SMTP/IMAP) + HTTPS (JMAP) for the TLS path.
+  mta-tls:
+    <<: *mta
+    dns: ["172.28.0.10"]
+    environment:
+      VULOS_DOMAIN: c.test
+      VULOS_ACCOUNT: carol@c.test
+      VULOS_PASSWORD: pw
+      VULOS_TLS_SELFSIGNED: "1"
+      VULOS_MX_ADDR: ":25"
+      VULOS_SUBMIT_ADDR: ":587"
+      VULOS_IMAP_ADDR: ":143"
+      VULOS_JMAP_ADDR: ":8080"
+      VULOS_METRICS_ADDR: ":9090"
+    volumes:
+      - mta-tls-data:/data
+    networks:
+      mailnet:
+        ipv4_address: 172.28.0.50
+    depends_on: [dns]
+
   runner:
     build:
       context: ./runner
-    networks: [mailnet] # default Docker DNS → resolves service names mta-a/mta-b
-    depends_on: [mta-a, mta-b]
+    networks: [mailnet] # default Docker DNS → resolves service names mta-a/mta-b/mta-tls
+    depends_on: [mta-a, mta-b, mta-tls]
 
 volumes:
   mta-a-data:
   mta-b-data:
+  mta-tls-data:

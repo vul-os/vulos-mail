@@ -35,13 +35,28 @@ cannot:
 and publishes the matching public key — plus MX, SPF, and DMARC records — into
 the CoreDNS zone, so authentication is evaluated **for real** against DNS.
 
-The runner asserts **20 checks**: inbound MX delivery, IMAP login/select/search,
-JMAP get/set/Identity, webmail contacts/calendar/push APIs, CalDAV+CardDAV
-PROPFIND, security boundaries (open-relay rejected, unknown-recipient rejected at
-RCPT, submission From-spoof rejected), Prometheus metrics, and the centerpiece:
+The runner asserts **33 checks** across every surface:
 
-> **alice@a.test → bob@b.test over real SMTP, received with
-> `spf=pass; dkim=pass; dmarc=pass`** in bob's Authentication-Results.
+- **Receive/read**: inbound MX → inbox, IMAP login/select/search, JMAP
+  get/set/Identity.
+- **Send paths (all bound to the authed account)**: SMTP submission, JMAP
+  EmailSubmission, and the webmail `/api/webmail/send` — each cross-server to
+  b.test.
+- **Cross-server auth (the centerpiece)**: `alice@a.test → bob@b.test` received
+  with **`spf=pass; dkim=pass; dmarc=pass`**; and a forged sender (wrong IP,
+  unsigned) correctly gets **`dmarc=fail`**.
+- **Features**: attachments end-to-end (send → cross-server → byte-exact
+  download), conversation threading, live SSE push on delivery, the **bounce/DSN
+  loop** (undeliverable → MAILER-DAEMON bounce back), the **vacation
+  auto-responder** (cross-server reply), and **DAV write round-trips** (CalDAV/
+  CardDAV `PUT` → visible via the webmail calendar/contacts APIs — unified store).
+- **Security**: open-relay rejected, unknown recipient rejected at RCPT,
+  From-spoof rejected over **both** SMTP submission and JMAP EmailSubmission.
+- **TLS**: STARTTLS submission+AUTH, MX STARTTLS receive + IMAP STARTTLS read,
+  and HTTPS JMAP (self-signed instance c.test).
+- **Ops**: Prometheus metrics, and **restart persistence** — `mta-a` is
+  restarted and the suite verifies the inbox survived and the **DKIM key is
+  byte-identical** across the restart.
 
 Everything is torn down (`down -v`) on exit.
 

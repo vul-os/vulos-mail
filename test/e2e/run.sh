@@ -17,7 +17,7 @@ echo "== building images =="
 $COMPOSE build
 
 echo "== starting dns + mail servers =="
-$COMPOSE up -d dns mta-a mta-b
+$COMPOSE up -d dns mta-a mta-b mta-tls
 
 echo "== running e2e suite =="
 set +e
@@ -27,6 +27,27 @@ set -e
 
 if [ $code -ne 0 ]; then
   echo "== runner failed (exit $code); recent server logs =="
-  $COMPOSE logs --tail=40 mta-a mta-b dns || true
+  $COMPOSE logs --tail=40 mta-a mta-b mta-tls dns || true
+  exit $code
+fi
+
+echo "== restart persistence: DKIM key stable + data survives =="
+dkim_key() { $COMPOSE logs --no-color mta-a 2>/dev/null | grep -oE 'p=[A-Za-z0-9+/=]+' | tail -1; }
+DKIM_BEFORE="$(dkim_key)"
+$COMPOSE restart mta-a
+set +e
+$COMPOSE run --rm -e RESTART_CHECK=1 runner
+code=$?
+set -e
+DKIM_AFTER="$(dkim_key)"
+if [ -n "$DKIM_BEFORE" ] && [ "$DKIM_BEFORE" = "$DKIM_AFTER" ]; then
+  echo "  [PASS] DKIM public key identical across restart"
+else
+  echo "  [FAIL] DKIM key changed across restart"; code=1
+fi
+
+if [ $code -ne 0 ]; then
+  echo "== restart phase failed; recent logs =="
+  $COMPOSE logs --tail=40 mta-a || true
 fi
 exit $code
