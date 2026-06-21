@@ -213,7 +213,7 @@ func (a *Account) removeFromOrder(id model.ID) {
 }
 
 func removeID(ids []model.ID, id model.ID) []model.ID {
-	out := ids[:0]
+	out := make([]model.ID, 0, len(ids)) // fresh slice: never alias the input's backing array
 	for _, x := range ids {
 		if x != id {
 			out = append(out, x)

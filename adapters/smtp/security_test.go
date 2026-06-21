@@ -174,3 +174,37 @@ func TestSubmissionRejectsSenderSpoofing(t *testing.T) {
 		t.Error("From-header spoofing should be rejected at DATA")
 	}
 }
+
+// Inbound mail must not be able to forge our Authentication-Results: a pre-existing
+// A-R header bearing our authserv-id is stripped before we add our own.
+func TestInboundAuthResultsForgeryStripped(t *testing.T) {
+	var got []byte
+	be := &smtpin.Backend{
+		Deliver:    func(_ context.Context, _ string, raw []byte) error { got = raw; return nil },
+		AuthServID: "mx.vulos.to",
+		Verify:     func([]byte, net.IP, string, string) string { return "dkim=fail" },
+	}
+	ln := listenTCP(t)
+	defer ln.Close()
+	go smtpin.NewServer(be, "", "vulos.to").Serve(ln)
+
+	c, err := gosmtp.Dial(ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	forged := "From: ceo@vulos.to\r\n" +
+		"Authentication-Results: mx.vulos.to; dmarc=pass header.from=ceo@vulos.to\r\n" +
+		"Subject: hi\r\n\r\nbody\r\n"
+	// recipient must be local-ish; Deliver here accepts anything.
+	if err := c.SendMail("attacker@evil.example", []string{"victim@vulos.to"}, strings.NewReader(forged)); err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	if strings.Contains(s, "dmarc=pass") {
+		t.Fatal("forged Authentication-Results (dmarc=pass) survived — auth spoofing possible")
+	}
+	if !strings.Contains(s, "mx.vulos.to; dkim=fail") {
+		t.Errorf("our own Authentication-Results header missing:\n%s", s)
+	}
+}

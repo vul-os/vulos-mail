@@ -120,6 +120,9 @@ func (w *Warmup) capFor(day int) int {
 	if day >= len(w.schedule) {
 		day = len(w.schedule) - 1
 	}
+	if day < 0 { // clock moved backward (NTP/VM migration) → never index < 0
+		day = 0
+	}
 	return w.schedule[day]
 }
 
@@ -196,13 +199,13 @@ func (r *Reputation) Throttled(tenant string) bool {
 // Scheduler drains an outbound queue respecting per-destination caps, warmup, and
 // reputation, retrying TempFail with backoff and bouncing PermFail.
 type Scheduler struct {
-	sender      Sender
-	pool        *Pool
-	warmup      *Warmup
-	rep         *Reputation
+	sender       Sender
+	pool         *Pool
+	warmup       *Warmup
+	rep          *Reputation
 	maxPerDomain int // max dispatches to one destination domain per tick
 	maxAttempts  int
-	backoff     func(attempt int) time.Duration
+	backoff      func(attempt int) time.Duration
 
 	mu       sync.Mutex
 	queue    []*queued

@@ -129,3 +129,63 @@ func TestPushTokenScopedAndOpaque(t *testing.T) {
 		t.Fatal("a fabricated token resolved to an account")
 	}
 }
+
+// SendRaw is the shared chokepoint for programmatic send paths (JMAP submission,
+// webapi, webmail). It must reject a message whose From header doesn't match the
+// sending account — closing DKIM-aligned From-spoofing on every caller.
+func TestSendRawBindsFromHeader(t *testing.T) {
+	ctx := context.Background()
+	m := newMgr(t)
+	_ = m.AddAccount("alice@vulos.to", "pw")
+
+	spoof := []byte("From: ceo@vulos.to\r\nTo: bob@x.com\r\nSubject: s\r\n\r\nhi\r\n")
+	if err := m.SendRaw(ctx, "alice@vulos.to", []string{"bob@x.com"}, spoof); err == nil {
+		t.Fatal("SendRaw accepted a spoofed From header (JMAP/webapi spoofing would be possible)")
+	}
+	// A message whose From matches the account is not rejected by the binding
+	// (it then proceeds to quota/enqueue; with no scheduler that's where it stops,
+	// so we only assert the binding itself didn't reject it).
+	aligned := []byte("From: alice@vulos.to\r\nTo: bob@x.com\r\nSubject: s\r\n\r\nhi\r\n")
+	err := m.SendRaw(ctx, "alice@vulos.to", []string{"bob@x.com"}, aligned)
+	if err != nil && err.Error() == "From header must match the sending account" {
+		t.Fatal("SendRaw wrongly rejected an aligned From header")
+	}
+}
+
+// GCBlobs must preserve the bodies of accounts that exist on disk but are not in
+// the in-memory creds map (e.g. after a restart with a different VULOS_ACCOUNT).
+// The blob store is global+deduped, so an incomplete live set = silent data loss.
+func TestGCPreservesOrphanedOnDiskAccount(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	blobs, _ := blob.NewFS(filepath.Join(dir, "blobs"))
+	bodyB := []byte("From: x@y\r\nTo: bob@vulos.to\r\nSubject: bob-only\r\n\r\nbob body\r\n")
+
+	// Boot 1: provision alice + bob, deliver to both (writes both account dirs).
+	m1 := server.NewManager(dir, blobs, nil)
+	_ = m1.AddAccount("alice@vulos.to", "pw")
+	_ = m1.AddAccount("bob@vulos.to", "pw")
+	if err := m1.Deliver(ctx, "alice@vulos.to", []byte("From: x@y\r\nTo: alice@vulos.to\r\nSubject: a\r\n\r\nalice body\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := m1.Deliver(ctx, "bob@vulos.to", bodyB); err != nil {
+		t.Fatal(err)
+	}
+	refB := blob.Ref(bodyB)
+
+	// Boot 2 (simulated restart): SAME data dir + blob store, but only alice is
+	// provisioned. bob's account is orphaned on disk (not in creds).
+	m2 := server.NewManager(dir, blobs, nil)
+	_ = m2.AddAccount("alice@vulos.to", "pw")
+
+	n, err := m2.GCBlobs(ctx, 0) // grace 0 = sweep anything unreferenced
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("GC deleted %d blobs; expected 0 (bob's body is still referenced on disk)", n)
+	}
+	if ok, _ := blobs.Has(ctx, refB); !ok {
+		t.Fatal("DATA LOSS: GC deleted the orphaned-on-disk account's message body")
+	}
+}

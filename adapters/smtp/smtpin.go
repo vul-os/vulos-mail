@@ -5,13 +5,64 @@
 package smtpin
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net"
+	"strings"
 	"time"
 
 	gosmtp "github.com/emersion/go-smtp"
 )
+
+// stripAuthResults removes any existing Authentication-Results header field whose
+// authserv-id matches servID (RFC 8601 §5), so untrusted inbound mail can't carry
+// a forged "dmarc=pass" line attributed to us. Folded continuation lines are
+// dropped with their field.
+func stripAuthResults(raw []byte, servID string) []byte {
+	i := bytes.Index(raw, []byte("\r\n\r\n"))
+	if i < 0 {
+		i = bytes.Index(raw, []byte("\n\n"))
+	}
+	if i < 0 {
+		return raw // no header/body boundary
+	}
+	header := string(raw[:i])
+	rest := raw[i:] // blank-line separator + body, preserved verbatim
+
+	var fields []string
+	for _, ln := range strings.Split(header, "\n") {
+		l := strings.TrimRight(ln, "\r")
+		if l == "" {
+			continue
+		}
+		if (l[0] == ' ' || l[0] == '\t') && len(fields) > 0 {
+			fields[len(fields)-1] += "\r\n" + l // folded continuation
+		} else {
+			fields = append(fields, l)
+		}
+	}
+	kept := fields[:0]
+	for _, f := range fields {
+		if isAuthResultsFor(f, servID) {
+			continue
+		}
+		kept = append(kept, f)
+	}
+	return append([]byte(strings.Join(kept, "\r\n")), rest...)
+}
+
+func isAuthResultsFor(field, servID string) bool {
+	if !strings.HasPrefix(strings.ToLower(field), "authentication-results:") {
+		return false
+	}
+	v := strings.TrimSpace(field[len("authentication-results:"):])
+	id := v
+	if j := strings.IndexAny(v, "; \t\r\n"); j >= 0 {
+		id = v[:j]
+	}
+	return strings.EqualFold(strings.TrimSpace(id), servID)
+}
 
 // DeliverFunc routes one accepted message to one recipient. Returning an error
 // causes the SMTP transaction to fail (the sending MX will retry).
@@ -84,11 +135,14 @@ func (s *session) Data(r io.Reader) error {
 	// (filters, clients) can see them. Prepending a header at the start of the
 	// message is RFC-valid.
 	if s.backend != nil && s.backend.Verify != nil {
+		servID := s.backend.AuthServID
+		if servID == "" {
+			servID = "vulos-mail"
+		}
+		// RFC 8601 §5: strip any pre-existing Authentication-Results header bearing
+		// our authserv-id, so an attacker can't embed a forged "dmarc=pass" line.
+		raw = stripAuthResults(raw, servID)
 		if ar := s.backend.Verify(raw, s.remoteIP(), s.helo(), s.from); ar != "" {
-			servID := s.backend.AuthServID
-			if servID == "" {
-				servID = "vulos-mail"
-			}
 			hdr := []byte("Authentication-Results: " + servID + "; " + ar + "\r\n")
 			raw = append(hdr, raw...)
 		}

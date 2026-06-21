@@ -609,12 +609,17 @@ func (s *session) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) error {
 						continue
 					}
 					ents := v.Entries(s.selLabel)
-					if len(ents) > len(s.msgs) {
-						for _, e := range ents[len(s.msgs):] {
-							if m, ok := s.rt.Message(e.Msg); ok {
-								s.msgs = append(s.msgs, selMsg{uid: e.UID, id: e.Msg, msg: m})
-							}
+					// Re-snapshot the whole selection (not append-only) so an expunge
+					// elsewhere during IDLE keeps s.msgs aligned with the mailbox.
+					prev := len(s.msgs)
+					ns := make([]selMsg, 0, len(ents))
+					for _, e := range ents {
+						if m, ok := s.rt.Message(e.Msg); ok {
+							ns = append(ns, selMsg{uid: e.UID, id: e.Msg, msg: m})
 						}
+					}
+					s.msgs = ns
+					if len(s.msgs) > prev { // new mail → push EXISTS (decreases sync on next poll)
 						s.tracker.QueueNumMessages(uint32(len(s.msgs)))
 					}
 				}

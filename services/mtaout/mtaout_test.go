@@ -151,3 +151,17 @@ func TestSchedulerReputationGate(t *testing.T) {
 		t.Fatalf("throttled tenant should not send: %+v", st)
 	}
 }
+
+// A backward clock jump (NTP correction / VM migration) must not panic the
+// warmup day-index math (which previously indexed schedule[-1]).
+func TestWarmupBackwardClockNoPanic(t *testing.T) {
+	w := mtaout.NewWarmup([]int{2, 5, 10})
+	t1 := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
+	w.Record("example.com", t1) // firstSeen = t1
+	// Clock jumps back two days; Allow/Record must clamp to day 0, not panic.
+	earlier := t1.Add(-48 * time.Hour)
+	if !w.Allow("example.com", earlier) {
+		t.Error("expected day-0 budget to allow a send after a backward clock jump")
+	}
+	w.Record("example.com", earlier) // must not panic
+}

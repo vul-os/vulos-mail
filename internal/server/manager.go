@@ -13,6 +13,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"net/mail"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,10 +124,18 @@ func (m *Manager) Subscribe(account string) (<-chan struct{}, func()) {
 // EventSource — which can't send Authorization headers — can authenticate).
 func (m *Manager) PushToken(account string) string {
 	var b [18]byte
-	_, _ = rand.Read(b[:])
+	if _, err := rand.Read(b[:]); err != nil {
+		return "" // fail closed: no token rather than a low-entropy one
+	}
 	tok := hex.EncodeToString(b[:])
 	m.subMu.Lock()
-	m.tokens[tok] = pushTok{account: strings.ToLower(account), expires: time.Now().Add(24 * time.Hour)}
+	now := time.Now()
+	for k, t := range m.tokens { // prune expired so the map can't grow unbounded
+		if now.After(t.expires) {
+			delete(m.tokens, k)
+		}
+	}
+	m.tokens[tok] = pushTok{account: strings.ToLower(account), expires: now.Add(24 * time.Hour)}
 	m.subMu.Unlock()
 	return tok
 }
@@ -306,23 +315,51 @@ func (m *Manager) Enqueue(msg mtaout.OutMessage) {
 // GCBlobs deletes blobs not referenced by any account's live messages and older
 // than grace (the grace window avoids racing a just-Put blob whose referencing
 // event hasn't committed yet). No-op if the blob store isn't GC-capable.
+//
+// The blob store is global + content-addressed (bodies dedup across accounts), so
+// the live set MUST cover EVERY account on disk — not just the ones currently
+// open or in the in-memory creds map — or a shared body could be wrongly swept.
+// It is fail-closed: if any account's log can't be read, GC aborts rather than
+// delete with an incomplete live set.
 func (m *Manager) GCBlobs(ctx context.Context, grace time.Duration) (int, error) {
 	gc, ok := m.blobs.(blob.GCStore)
 	if !ok {
 		return 0, nil
 	}
+	live := map[model.BlobRef]bool{}
+
+	// (a) Currently-open accounts: read live refs from the live runtime (consistent
+	// under its own lock), and remember their dirs so we don't re-read them.
 	m.mu.Lock()
-	addrs := make([]string, 0, len(m.creds))
-	for a := range m.creds {
-		addrs = append(addrs, a)
+	openRts := make([]*account.Runtime, 0, len(m.accounts))
+	openDirs := map[string]bool{}
+	for a, rt := range m.accounts {
+		openRts = append(openRts, rt)
+		openDirs[safeName(a)] = true
 	}
 	m.mu.Unlock()
+	for _, rt := range openRts {
+		for _, ref := range rt.LiveBlobRefs() {
+			live[ref] = true
+		}
+	}
 
-	live := map[model.BlobRef]bool{}
-	for _, a := range addrs {
-		rt, err := m.account(ctx, a)
-		if err != nil {
+	// (b) Every other account dir on disk (not open → static log, safe to read).
+	entries, err := os.ReadDir(filepath.Join(m.dir, "accounts"))
+	if err != nil && !os.IsNotExist(err) {
+		return 0, err
+	}
+	for _, e := range entries {
+		if !e.IsDir() || openDirs[e.Name()] {
 			continue
+		}
+		lg, err := m.LogOpen(filepath.Join(m.dir, "accounts", e.Name()))
+		if err != nil {
+			return 0, err // fail-closed: never GC with an incomplete live set
+		}
+		rt, err := account.Open(ctx, lg, m.blobs, m.gen, nil)
+		if err != nil {
+			return 0, err
 		}
 		for _, ref := range rt.LiveBlobRefs() {
 			live[ref] = true
@@ -420,6 +457,12 @@ func (m *Manager) WebSendMsg(ctx context.Context, account string, to, cc []strin
 // transactional webapi): DKIM-signs with the From domain's key and enqueues one
 // message per destination domain. Quota is enforced when configured.
 func (m *Manager) SendRaw(_ context.Context, from string, to []string, raw []byte) error {
+	// Bind the visible From: header to the sending account. This is the shared
+	// chokepoint for every programmatic send path (JMAP EmailSubmission, webapi,
+	// webmail), so no caller can emit DKIM-aligned mail "From" another address.
+	if env, perr := mime.ParseEnvelope(raw); perr != nil || len(env.From) == 0 || !addrEqual(env.From[0], from) {
+		return errors.New("From header must match the sending account")
+	}
 	if err := m.CheckQuota(from, len(raw)); err != nil {
 		return err
 	}
@@ -475,4 +518,18 @@ func tenantOf(address string) string {
 
 func safeName(address string) string {
 	return strings.NewReplacer("@", "_at_", "/", "_", "\\", "_", "..", "_").Replace(address)
+}
+
+// addrEqual compares two addresses for identity, tolerating display-name forms
+// ("Name <a@b>") on either side.
+func addrEqual(a, b string) bool {
+	pa, pb := parseAddr(a), parseAddr(b)
+	return pa != "" && strings.EqualFold(pa, pb)
+}
+
+func parseAddr(s string) string {
+	if m, err := mail.ParseAddress(s); err == nil {
+		return m.Address
+	}
+	return strings.TrimSpace(s)
 }
