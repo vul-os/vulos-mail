@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/vul-os/vulos-mail/internal/blob"
@@ -187,5 +188,21 @@ func TestGCPreservesOrphanedOnDiskAccount(t *testing.T) {
 	}
 	if ok, _ := blobs.Has(ctx, refB); !ok {
 		t.Fatal("DATA LOSS: GC deleted the orphaned-on-disk account's message body")
+	}
+}
+
+// Passwords longer than bcrypt's 72-byte limit must not be silently truncated
+// (pre-hash maps them to a fixed-length digest). A long password authenticates,
+// and a different long password sharing the first 72 bytes does NOT.
+func TestLongPasswordNotTruncated(t *testing.T) {
+	m := newMgr(t)
+	base := strings.Repeat("a", 72)
+	_ = m.AddAccount("alice@vulos.to", base+"-CORRECT-tail")
+
+	if _, err := m.AuthIMAP("alice@vulos.to", base+"-CORRECT-tail"); err != nil {
+		t.Fatalf("correct long password should authenticate: %v", err)
+	}
+	if _, err := m.AuthIMAP("alice@vulos.to", base+"-WRONG-tail"); err == nil {
+		t.Fatal("a different password sharing the first 72 bytes must NOT authenticate (bcrypt truncation)")
 	}
 }

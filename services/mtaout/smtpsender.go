@@ -2,6 +2,7 @@ package mtaout
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sort"
 	"strings"
@@ -103,8 +104,18 @@ func classify(err error) SendResult {
 
 func mxHosts(domain string) ([]string, error) {
 	mxs, err := net.LookupMX(domain)
-	if err != nil || len(mxs) == 0 {
-		// No MX: fall back to the domain's A/AAAA record (RFC 5321 §5.1).
+	if err != nil {
+		// Distinguish "no such domain / no MX records" (fall back to A/AAAA per
+		// RFC 5321 §5.1) from a transient resolver failure (SERVFAIL/timeout),
+		// which must TempFail so delivery retries instead of mis-routing to the
+		// bare domain.
+		var de *net.DNSError
+		if errors.As(err, &de) && de.IsNotFound {
+			return []string{domain}, nil
+		}
+		return nil, err
+	}
+	if len(mxs) == 0 {
 		return []string{domain}, nil
 	}
 	sort.Slice(mxs, func(i, j int) bool { return mxs[i].Pref < mxs[j].Pref })

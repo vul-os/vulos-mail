@@ -23,10 +23,10 @@ const (
 
 // Filter enforces per-account outbound limits. Safe for concurrent use.
 type Filter struct {
-	window         time.Duration
-	maxPerWindow   int
-	maxRecipients  int
-	now            func() time.Time
+	window        time.Duration
+	maxPerWindow  int
+	maxRecipients int
+	now           func() time.Time
 
 	mu        sync.Mutex
 	sends     map[string][]time.Time

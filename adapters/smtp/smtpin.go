@@ -78,6 +78,10 @@ type Backend struct {
 	// AuthServID is the authserv-id placed in the Authentication-Results header
 	// (typically this host's name).
 	AuthServID string
+	// KnownRcpt, if set, reports whether a recipient is deliverable here. When it
+	// returns false the MX rejects at RCPT (550 5.1.1) instead of accepting the
+	// whole DATA and failing — cheaper and a smaller amplification surface.
+	KnownRcpt func(rcpt string) bool
 }
 
 // NewSession starts a new SMTP session.
@@ -122,6 +126,9 @@ func (s *session) remoteIP() net.IP {
 }
 
 func (s *session) Rcpt(to string, _ *gosmtp.RcptOptions) error {
+	if s.backend != nil && s.backend.KnownRcpt != nil && !s.backend.KnownRcpt(to) {
+		return &gosmtp.SMTPError{Code: 550, EnhancedCode: gosmtp.EnhancedCode{5, 1, 1}, Message: "no such user here"}
+	}
 	s.rcpts = append(s.rcpts, to)
 	return nil
 }

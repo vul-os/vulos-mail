@@ -115,6 +115,7 @@ type File struct {
 	path string
 	seq  uint64
 	now  func() time.Time
+	w    *os.File // persistent append handle (avoids open/close per record)
 }
 
 // OpenFile opens (or creates on first append) a JSONL log at path, recovering
@@ -137,7 +138,24 @@ func OpenFile(path string, now func() time.Time) (*File, error) {
 	if _, through, ok, serr := f.LoadSnapshot(); serr == nil && ok && through > f.seq {
 		f.seq = through
 	}
+	w, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	f.w = w
 	return f, nil
+}
+
+// Close releases the append handle. The log is unusable afterward.
+func (f *File) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.w == nil {
+		return nil
+	}
+	err := f.w.Close()
+	f.w = nil
+	return err
 }
 
 func (f *File) Append(_ context.Context, actor string, e event.Event) (Record, error) {
@@ -153,16 +171,10 @@ func (f *File) Append(_ context.Context, actor string, e event.Event) (Record, e
 	if err != nil {
 		return Record{}, err
 	}
-
-	file, err := os.OpenFile(f.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
+	if _, err := f.w.Write(append(line, '\n')); err != nil {
 		return Record{}, err
 	}
-	defer file.Close()
-	if _, err := file.Write(append(line, '\n')); err != nil {
-		return Record{}, err
-	}
-	if err := file.Sync(); err != nil {
+	if err := f.w.Sync(); err != nil {
 		return Record{}, err
 	}
 	f.seq = r.Seq
@@ -253,7 +265,21 @@ func (f *File) SaveSnapshot(throughSeq uint64, data []byte) error {
 	if err := os.WriteFile(logTmp, buf, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(logTmp, f.path)
+	if err := os.Rename(logTmp, f.path); err != nil {
+		return err
+	}
+	// The rename replaced the inode our append handle was bound to; reopen it on
+	// the new file so subsequent Appends land in the compacted log (not the now-
+	// unlinked old one).
+	if f.w != nil {
+		_ = f.w.Close()
+		w, err := os.OpenFile(f.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			return err
+		}
+		f.w = w
+	}
+	return nil
 }
 
 type snapWire struct {

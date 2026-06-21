@@ -65,7 +65,7 @@ func (mb *mailbox) retire(msg model.ID) {
 
 // View is the folded UID state for an account, keyed by label (= IMAP mailbox).
 type View struct {
-	Seq      uint64
+	Seq       uint64
 	mailboxes map[model.LabelID]*mailbox
 }
 

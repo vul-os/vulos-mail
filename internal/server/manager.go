@@ -11,6 +11,8 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"net/mail"
@@ -182,7 +184,7 @@ func (m *Manager) EnsureDKIM(domain, selector string) (string, error) {
 
 // AddAccount registers an address with a password (stored bcrypt-hashed).
 func (m *Manager) AddAccount(address, password string) error {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword(prehash(password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
@@ -190,6 +192,23 @@ func (m *Manager) AddAccount(address, password string) error {
 	defer m.mu.Unlock()
 	m.creds[strings.ToLower(address)] = hash
 	return nil
+}
+
+// prehash maps a password to a fixed-length base64(sha256) digest before bcrypt,
+// so passwords longer than bcrypt's 72-byte limit aren't silently truncated (a
+// collision surface). base64 of a sha256 is 44 bytes and contains no NUL.
+func prehash(password string) []byte {
+	sum := sha256.Sum256([]byte(password))
+	return []byte(base64.StdEncoding.EncodeToString(sum[:]))
+}
+
+// IsLocal reports whether rcpt is a provisioned local account (used by the MX to
+// reject unknown recipients at RCPT time).
+func (m *Manager) IsLocal(rcpt string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.creds[strings.ToLower(rcpt)]
+	return ok
 }
 
 // account returns the runtime for address, opening (and caching) it on first use.
@@ -364,6 +383,7 @@ func (m *Manager) GCBlobs(ctx context.Context, grace time.Duration) (int, error)
 		for _, ref := range rt.LiveBlobRefs() {
 			live[ref] = true
 		}
+		_ = rt.Close() // throwaway: release the log handle (no fd/db leak)
 	}
 
 	infos, err := gc.ListBlobs(ctx)
@@ -506,7 +526,7 @@ func (m *Manager) checkCred(username, password string) bool {
 	if !ok {
 		return false
 	}
-	return bcrypt.CompareHashAndPassword(hash, []byte(password)) == nil
+	return bcrypt.CompareHashAndPassword(hash, prehash(password)) == nil
 }
 
 func tenantOf(address string) string {

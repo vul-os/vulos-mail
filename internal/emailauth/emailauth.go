@@ -24,7 +24,7 @@ import (
 // Authenticator evaluates inbound sender authentication. Zero value uses real
 // DNS; inject the lookups/resolver for tests.
 type Authenticator struct {
-	SPFResolver    spf.DNSResolver               // nil => net default
+	SPFResolver    spf.DNSResolver                // nil => net default
 	DKIMLookupTXT  func(string) ([]string, error) // nil => net.LookupTXT
 	DMARCLookupTXT func(string) ([]string, error) // nil => net.LookupTXT
 }
@@ -120,7 +120,15 @@ func aligned(a, b string) bool {
 func domainOf(addr string) string {
 	addr = strings.Trim(strings.TrimSpace(addr), "<>")
 	if i := strings.LastIndex(addr, "@"); i >= 0 {
-		return strings.ToLower(addr[i+1:])
+		addr = addr[i+1:]
 	}
-	return strings.ToLower(addr)
+	// Strip CR/LF/control chars, spaces, and ';' so a crafted domain can never
+	// break out of (or forge structure in) the Authentication-Results header it
+	// is interpolated into.
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || r == ' ' || r == ';' {
+			return -1
+		}
+		return r
+	}, strings.ToLower(addr))
 }

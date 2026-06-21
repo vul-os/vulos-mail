@@ -20,7 +20,7 @@ func TestRefTraversalRejected(t *testing.T) {
 		model.BlobRef("sha256:" + strings.Repeat("a", 65)), // too long
 		model.BlobRef("sha256:" + strings.Repeat("A", 64)), // uppercase not allowed
 		model.BlobRef("sha256:" + strings.Repeat("g", 64)), // non-hex
-		model.BlobRef("md5:" + strings.Repeat("a", 64)), // wrong algo prefix
+		model.BlobRef("md5:" + strings.Repeat("a", 64)),    // wrong algo prefix
 		"../leak",
 		"",
 	}

@@ -129,8 +129,8 @@ func TestJMAPSessionAndEmailFlow(t *testing.T) {
 		"accountId": "alice",
 		"update": map[string]any{
 			string(idA): map[string]any{
-				"keywords/$seen":      true,
-				"mailboxIds/work":     true,
+				"keywords/$seen":                         true,
+				"mailboxIds/work":                        true,
 				"mailboxIds/" + string(model.LabelInbox): nil, // remove from inbox
 			},
 		},

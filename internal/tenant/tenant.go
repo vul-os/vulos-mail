@@ -13,7 +13,7 @@ import (
 // Registry maps an account/domain to a stable tenant id. Unmapped domains are
 // their own tenant (the domain string), so single-tenant setups need no config.
 type Registry struct {
-	mu   sync.RWMutex
+	mu       sync.RWMutex
 	byDomain map[string]string
 }
 

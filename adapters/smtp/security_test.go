@@ -208,3 +208,30 @@ func TestInboundAuthResultsForgeryStripped(t *testing.T) {
 		t.Errorf("our own Authentication-Results header missing:\n%s", s)
 	}
 }
+
+// With KnownRcpt wired, the MX rejects unknown recipients at RCPT (550 5.1.1)
+// rather than accepting the whole message and failing at DATA.
+func TestMXRejectsUnknownRcptAtRcptTime(t *testing.T) {
+	be := &smtpin.Backend{
+		Deliver:   func(context.Context, string, []byte) error { return nil },
+		KnownRcpt: func(rcpt string) bool { return rcpt == "bob@vulos.to" },
+	}
+	ln := listenTCP(t)
+	defer ln.Close()
+	go smtpin.NewServer(be, "", "vulos.to").Serve(ln)
+
+	c, err := gosmtp.Dial(ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.Mail("s@x.example", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Rcpt("nobody@vulos.to", nil); err == nil {
+		t.Error("RCPT to an unknown recipient should be rejected at RCPT time")
+	}
+	if err := c.Rcpt("bob@vulos.to", nil); err != nil {
+		t.Errorf("RCPT to a known recipient should be accepted: %v", err)
+	}
+}

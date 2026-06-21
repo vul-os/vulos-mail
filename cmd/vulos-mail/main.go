@@ -201,6 +201,7 @@ func main() {
 	mx := smtpin.NewServer(&smtpin.Backend{
 		Deliver:    mgr.Deliver,
 		AuthServID: domain,
+		KnownRcpt:  mgr.IsLocal, // reject unknown recipients at RCPT (550 5.1.1)
 		Verify: func(raw []byte, ip net.IP, helo, mailFrom string) string {
 			// Bound DNS-backed auth (SPF/DMARC) so a slow/dead resolver can never
 			// stall the delivery path.

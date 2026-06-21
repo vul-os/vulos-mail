@@ -16,8 +16,8 @@ import (
 // or score ≥ JunkScore → Junk; else Accept. Errors fail open (Accept) so a down
 // scanner never blocks mail.
 type Rspamd struct {
-	URL      string
-	Client   *http.Client
+	URL       string
+	Client    *http.Client
 	JunkScore float64
 }
 

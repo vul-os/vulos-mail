@@ -104,3 +104,27 @@ func TestBuildUsesCRLF(t *testing.T) {
 		t.Error("missing CRLF header/body separator")
 	}
 }
+
+// The bounce is a proper multipart/report (RFC 3464) with a machine-readable
+// delivery-status part, and injected reasons/recipients can't break out.
+func TestBuildMultipartReport(t *testing.T) {
+	raw := dsn.Build("vulos.to", "alice@x.com", []string{"bob@gone.example"},
+		"550 boom\r\nInjected: evil")
+	s := string(raw)
+	if !strings.Contains(s, "multipart/report; report-type=delivery-status") {
+		t.Error("not a multipart/report DSN")
+	}
+	if !strings.Contains(s, "message/delivery-status") {
+		t.Error("missing message/delivery-status part")
+	}
+	if !strings.Contains(s, "Final-Recipient: rfc822; bob@gone.example") {
+		t.Error("missing Final-Recipient in delivery-status")
+	}
+	if !strings.Contains(s, "Action: failed") || !strings.Contains(s, "Status: 5.0.0") {
+		t.Error("missing Action/Status in delivery-status")
+	}
+	// CRLF injection in the reason must be neutralized (no new header line).
+	if strings.Contains(s, "\r\nInjected: evil") {
+		t.Error("CRLF injection via reason was not sanitized")
+	}
+}

@@ -90,6 +90,9 @@ func (s *S3) Get(ctx context.Context, ref model.BlobRef) ([]byte, error) {
 	}
 	obj, err := s.cli.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
+		if isNotFound(err) {
+			return nil, ErrNotFound
+		}
 		return nil, err
 	}
 	defer obj.Close()

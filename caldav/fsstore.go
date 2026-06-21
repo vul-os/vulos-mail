@@ -32,7 +32,10 @@ func fsSafe(s string) string {
 
 func (s *FSStore) dir(account string) string { return filepath.Join(s.root, fsSafe(account)) }
 
-func fsEtag(data []byte) string { h := sha256.Sum256(data); return `"` + hex.EncodeToString(h[:]) + `"` }
+func fsEtag(data []byte) string {
+	h := sha256.Sum256(data)
+	return `"` + hex.EncodeToString(h[:]) + `"`
+}
 
 func (s *FSStore) Put(account, href string, ics []byte) string {
 	s.mu.Lock()

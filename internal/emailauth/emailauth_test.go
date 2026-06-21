@@ -19,9 +19,9 @@ func (f fakeDNS) lookupTXT(name string) ([]string, error) { return f.txt[name], 
 func (f fakeDNS) LookupTXT(_ context.Context, name string) ([]string, error) {
 	return f.txt[name], nil
 }
-func (f fakeDNS) LookupMX(context.Context, string) ([]*net.MX, error)      { return nil, nil }
+func (f fakeDNS) LookupMX(context.Context, string) ([]*net.MX, error)        { return nil, nil }
 func (f fakeDNS) LookupIPAddr(context.Context, string) ([]net.IPAddr, error) { return nil, nil }
-func (f fakeDNS) LookupAddr(context.Context, string) ([]string, error)     { return nil, nil }
+func (f fakeDNS) LookupAddr(context.Context, string) ([]string, error)       { return nil, nil }
 
 func TestVerifyAllPass(t *testing.T) {
 	ctx := context.Background()
@@ -40,9 +40,9 @@ func TestVerifyAllPass(t *testing.T) {
 	}
 
 	dns := fakeDNS{txt: map[string][]string{
-		"sender.test":                {"v=spf1 ip4:203.0.113.5 -all"}, // SPF: only this IP
-		"s1._domainkey.sender.test":  {dkimTXT},                       // DKIM public key
-		"_dmarc.sender.test":         {"v=DMARC1; p=reject"},          // DMARC policy
+		"sender.test":               {"v=spf1 ip4:203.0.113.5 -all"}, // SPF: only this IP
+		"s1._domainkey.sender.test": {dkimTXT},                       // DKIM public key
+		"_dmarc.sender.test":        {"v=DMARC1; p=reject"},          // DMARC policy
 	}}
 
 	a := &emailauth.Authenticator{

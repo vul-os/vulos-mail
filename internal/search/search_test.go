@@ -205,8 +205,8 @@ func TestSearchToleratesMissingBlob(t *testing.T) {
 	s := newStore(t)
 	// Message refers to a blob never stored.
 	m1 := &model.Message{
-		ID:      "A",
-		BlobRef: blob.Ref([]byte("never stored content")),
+		ID:       "A",
+		BlobRef:  blob.Ref([]byte("never stored content")),
 		Envelope: model.Envelope{Subject: "subject only"},
 	}
 

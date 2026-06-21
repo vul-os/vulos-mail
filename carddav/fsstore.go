@@ -30,9 +30,14 @@ func safe(s string) string {
 	return strings.NewReplacer("/", "_", "\\", "_", "..", "_", "@", "_at_").Replace(s)
 }
 
-func (s *FSStore) dir(account string) string { return filepath.Join(s.root, safe(strings.ToLower(account))) }
+func (s *FSStore) dir(account string) string {
+	return filepath.Join(s.root, safe(strings.ToLower(account)))
+}
 
-func fsEtag(data []byte) string { h := sha256.Sum256(data); return `"` + hex.EncodeToString(h[:]) + `"` }
+func fsEtag(data []byte) string {
+	h := sha256.Sum256(data)
+	return `"` + hex.EncodeToString(h[:]) + `"`
+}
 
 func (s *FSStore) Put(account, href string, data []byte) (Resource, error) {
 	s.mu.Lock()

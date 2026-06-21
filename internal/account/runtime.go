@@ -81,6 +81,16 @@ func openProjection(ctx context.Context, log eventlog.Log) (*projection.Account,
 	return projection.Rebuild(ctx, log)
 }
 
+// Close releases the underlying log's resources (e.g. the File append handle or
+// the SQLite db). Use only for throwaway runtimes opened outside the manager's
+// cache; a cached runtime must not be closed while still serving requests.
+func (r *Runtime) Close() error {
+	if c, ok := r.log.(interface{ Close() error }); ok {
+		return c.Close()
+	}
+	return nil
+}
+
 // Compact snapshots the current projection and truncates the consumed log prefix
 // (no-op if the log doesn't support snapshots). Holds the write lock so no append
 // races the truncation.
