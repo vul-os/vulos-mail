@@ -187,12 +187,15 @@
       const li = el("li", "row" + (unread ? " unread" : "") + (m.id === S.openId ? " active" : "") + (picked ? " picked" : ""));
       li.dataset.i = i; li.dataset.id = row.id;
       li.style.animationDelay = Math.min(i, 14) * 24 + "ms";
+      const nm = fromName(m);
       li.innerHTML =
         (unread ? '<span class="row-unreaddot"></span>' : "") +
-        `<span class="pick" data-pick><svg viewBox="0 0 24 24" class="ic" style="width:12px;height:12px;stroke-width:2.6"><path d="M20 6 9 17l-5-5"/></svg></span>` +
-        `<svg viewBox="0 0 24 24" class="star${starred ? " on" : ""}" data-star><path d="${STAR}"/></svg>` +
+        `<span class="pick" data-pick title="Select"><svg viewBox="0 0 24 24" class="ic" style="width:12px;height:12px;stroke-width:2.6"><path d="M20 6 9 17l-5-5"/></svg></span>` +
+        `<div class="row-avatar" style="background:${avatarColor(fromAddr(m))}">${esc(initials(nm))}</div>` +
         `<div class="row-main">
-           <div class="row-top"><span class="row-from">${esc(fromName(m))}</span><span class="row-date">${fmtDate(m.receivedAt)}</span></div>
+           <div class="row-top"><span class="row-from">${esc(nm)}</span>
+             <svg viewBox="0 0 24 24" class="star${starred ? " on" : ""}" data-star title="Star"><path d="${STAR}"/></svg>
+             <span class="row-date">${fmtDate(m.receivedAt)}</span></div>
            <div class="row-subj">${esc(m.subject || "(no subject)")}</div>
            <div class="row-snip">${esc(m.preview || "")}</div>
          </div>`;
@@ -298,20 +301,42 @@
       const cell = el("div", "cal-cell" + (d.getMonth() !== m ? " other" : "") + (sameDay(d, today) ? " today" : ""));
       cell.appendChild(el("span", "cal-daynum", String(d.getDate())));
       const evs = byDay[dayKey(d)] || [];
-      evs.slice(0, 3).forEach((ev) => {
+      const shown = evs.length > 3 ? 2 : evs.length; // leave room for "+N more"
+      evs.slice(0, shown).forEach((ev) => {
         const t = new Date(ev.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
         const pill = el("div", "cal-pill", `<span class="pt">${t}</span><span class="pn">${esc(ev.summary || "(untitled)")}</span>`);
+        pill.title = t + "  " + (ev.summary || "(untitled)");
         pill.onclick = (e) => { e.stopPropagation(); openEventPop(ev); };
         cell.appendChild(pill);
       });
-      if (evs.length > 3) {
-        const more = el("div", "cal-more", "+" + (evs.length - 3) + " more");
-        more.onclick = (e) => { e.stopPropagation(); setView("agenda"); };
+      if (evs.length > shown) {
+        const more = el("div", "cal-more", "+" + (evs.length - shown) + " more");
+        more.onclick = (e) => { e.stopPropagation(); openDayPop(d, evs); };
         cell.appendChild(more);
       }
       cell.onclick = () => openEventPop(null, d);
       grid.appendChild(cell);
     }
+  }
+  // Day-detail popover (from "+N more"): lists that day's events; keeps month view.
+  function openDayPop(day, evs) {
+    const card = $("#calendar .cal-card");
+    const pop = el("div", "cal-pop");
+    const form = el("form", "", `<div class="cal-pop-title">${esc(day.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }))}</div>`);
+    form.addEventListener("submit", (e) => e.preventDefault());
+    evs.forEach((ev) => {
+      const t = new Date(ev.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      const row = el("div", "cal-ev", `<span class="cal-time">${t}</span><span class="cal-dot"></span><span class="cal-title">${esc(ev.summary || "(untitled)")}</span>`);
+      row.onclick = () => { pop.remove(); openEventPop(ev); };
+      form.appendChild(row);
+    });
+    const add = el("button", "btn btn-ghost", "+ Add event"); add.type = "button";
+    add.style.marginTop = "8px";
+    add.onclick = () => { pop.remove(); openEventPop(null, day); };
+    form.appendChild(add);
+    pop.appendChild(form);
+    pop.addEventListener("click", (e) => { if (e.target === pop) pop.remove(); });
+    card.appendChild(pop);
   }
   function renderAgenda() {
     const box = $("#calendar-list");
@@ -445,7 +470,7 @@
     showRead(true);
     $("#read").innerHTML = '<div class="read-actions"></div>' + skeleton(3);
     try {
-      const g = await jmap.emails([row.id], ["id", "threadId", "from", "to", "cc", "subject", "receivedAt", "keywords", "mailboxIds", "bodyValues", "preview", "size"]);
+      const g = await jmap.emails([row.id], ["id", "threadId", "from", "to", "cc", "subject", "receivedAt", "keywords", "mailboxIds", "bodyValues", "attachments", "preview", "size"]);
       const m = (g.list || [])[0];
       if (!m) return;
       row.msg = { ...row.msg, ...m };
@@ -480,7 +505,7 @@
           </div>
           <div class="msg-date">${fmtFull(m.receivedAt)}</div>
         </div>
-        <div class="msg-body">${linkify(esc(body))}</div>
+        <div class="msg-body">${fmtBody(body)}</div>
         ${attsHTML(m.attachments)}
       </div>`;
     $("#read [data-act=back]").onclick = backToList;
@@ -527,16 +552,17 @@
     try { await jmap.set({ [row.id]: { ["keywords/$flagged"]: on ? true : null } }); } catch {}
     toast(on ? "Starred" : "Unstarred");
   }
-  async function archive(row) { await moveOut(row, "Archived"); }
-  async function trash(row) {
-    try { await jmap.set({ [row.id]: { ["mailboxIds/inbox"]: null, ["mailboxIds/trash"]: true } }); } catch {}
-    removeRow(row); toast("Deleted");
-  }
-  async function moveOut(row) {
-    // Archive = remove from inbox (Gmail semantics: lives on in All Mail).
-    try { await jmap.set({ [row.id]: { ["mailboxIds/inbox"]: null } }); } catch {}
+  async function archive(row) {
+    const id = row.id;
     if (S.current === "inbox") removeRow(row);
-    toast("Archived");
+    try { await jmap.set({ [id]: { ["mailboxIds/inbox"]: null } }); } catch {}
+    toast("Archived", async () => { await jmap.set({ [id]: { ["mailboxIds/inbox"]: true } }); loadList(); });
+  }
+  async function trash(row) {
+    const id = row.id;
+    removeRow(row);
+    try { await jmap.set({ [id]: { ["mailboxIds/inbox"]: null, ["mailboxIds/trash"]: true } }); } catch {}
+    toast("Deleted", async () => { await jmap.set({ [id]: { ["mailboxIds/inbox"]: true, ["mailboxIds/trash"]: null } }); loadList(); });
   }
   function removeRow(row) {
     S.rows = S.rows.filter((r) => r.id !== row.id);
@@ -574,13 +600,29 @@
     // attachments
     const file = node.querySelector(".c-file");
     node.querySelector("[data-attach]").onclick = () => file.click();
-    file.addEventListener("change", async () => {
-      for (const f of file.files) {
+    const ingestFiles = async (files) => {
+      for (const f of files) {
         const data = await readBase64(f);
         atts.push({ name: f.name, type: f.type || "application/octet-stream", data, size: f.size });
       }
-      file.value = ""; renderAtts();
+      renderAtts();
+    };
+    file.addEventListener("change", async () => { await ingestFiles(file.files); file.value = ""; });
+    // Drag-and-drop attachments onto the compose window.
+    let dragDepth = 0;
+    node.addEventListener("dragenter", (e) => { e.preventDefault(); if (dragDepth++ === 0) showDrop(true); });
+    node.addEventListener("dragover", (e) => e.preventDefault());
+    node.addEventListener("dragleave", (e) => { e.preventDefault(); if (--dragDepth <= 0) { dragDepth = 0; showDrop(false); } });
+    node.addEventListener("drop", async (e) => {
+      e.preventDefault(); dragDepth = 0; showDrop(false);
+      if (e.dataTransfer && e.dataTransfer.files.length) await ingestFiles(e.dataTransfer.files);
     });
+    function showDrop(on) {
+      node.classList.toggle("dragging", on);
+      let d = node.querySelector(".compose-drop");
+      if (on && !d) { d = el("div", "compose-drop", "Drop files to attach"); node.appendChild(d); }
+      else if (!on && d) d.remove();
+    }
     function renderAtts() {
       const box = node.querySelector(".c-atts"); box.innerHTML = "";
       atts.forEach((a, i) => {
@@ -762,6 +804,19 @@
   }
   function esc(s) { return (s == null ? "" : String(s)).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
   function linkify(s) { return s.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'); }
+  // Escape, linkify per line, and wrap runs of ">"-quoted lines in a blockquote.
+  function fmtBody(body) {
+    const lines = (body || "").split("\n");
+    let out = "", inQ = false;
+    for (const ln of lines) {
+      const q = /^\s*>/.test(ln);
+      if (q && !inQ) { out += "<blockquote>"; inQ = true; }
+      else if (!q && inQ) { out += "</blockquote>"; inQ = false; }
+      out += linkify(esc(q ? ln.replace(/^\s*>\s?/, "") : ln)) + "\n";
+    }
+    if (inQ) out += "</blockquote>";
+    return out;
+  }
   function skeleton(n) { return Array(n).fill('<li class="skeleton"><div class="sk-line" style="width:40%"></div><div class="sk-line" style="width:80%"></div><div class="sk-line" style="width:60%"></div></li>').join(""); }
   function fmtDate(iso) {
     if (!iso) return ""; const d = new Date(iso), now = new Date();
@@ -771,15 +826,17 @@
   }
   function fmtFull(iso) { return iso ? new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""; }
   function fmtBytes(n) { if (!n) return ""; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(0) + " KB"; return (n / 1048576).toFixed(1) + " MB"; }
-  let toastT;
+  // Stacked toasts: each is its own node that auto-expires, so rapid actions
+  // don't clobber each other (and an Undo isn't lost to the next action).
   function toast(t, undoFn) {
-    const e = $("#toast");
-    e.innerHTML = esc(t) + (undoFn ? '<span class="undo">Undo</span>' : "");
-    e.hidden = false; requestAnimationFrame(() => e.classList.add("show"));
-    if (undoFn) e.querySelector(".undo").onclick = () => { undoFn(); hideToast(); };
-    clearTimeout(toastT); toastT = setTimeout(hideToast, undoFn ? 5500 : 2200);
+    const stack = $("#toast-stack");
+    const e = el("div", "toast", esc(t) + (undoFn ? '<span class="undo">Undo</span>' : ""));
+    stack.appendChild(e);
+    requestAnimationFrame(() => e.classList.add("show"));
+    const dismiss = () => { e.classList.remove("show"); setTimeout(() => e.remove(), 280); };
+    if (undoFn) e.querySelector(".undo").onclick = () => { undoFn(); dismiss(); };
+    setTimeout(dismiss, undoFn ? 6000 : 2400);
   }
-  function hideToast() { const e = $("#toast"); e.classList.remove("show"); setTimeout(() => (e.hidden = true), 300); }
 
   boot();
 })();

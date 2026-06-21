@@ -104,18 +104,21 @@
     <header class="compose-head">
       <span>New message</span>
       <div class="compose-head-actions">
-        <button class="iconbtn min" title="Minimize">—</button>
-        <button class="iconbtn close" title="Discard (Esc)">✕</button>
+        <button class="iconbtn min" title="Minimize"><svg viewBox="0 0 24 24" class="ic"><path d="M5 12h14"/></svg></button>
+        <button class="iconbtn close" title="Discard (Esc)"><svg viewBox="0 0 24 24" class="ic"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
       </div>
     </header>
     <div class="compose-body">
       <label class="crow"><span>To</span><input class="c-to" type="text" placeholder="recipient@domain" /></label>
       <label class="crow"><span>Subject</span><input class="c-subj" type="text" placeholder="Subject" /></label>
-      <div class="c-rich" contenteditable="true" data-ph="Write something…"></div>
+      <div class="c-rich" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message body" data-ph="Write something…"></div>
       <div class="c-atts"></div>
     </div>
     <footer class="compose-foot">
-      <button class="btn btn-primary c-send">Send <kbd>⌘↵</kbd></button>
+      <button class="btn btn-primary c-send" title="Send  ⌘↵">
+        <svg viewBox="0 0 24 24" class="ic"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg>
+        Send
+      </button>
       <div class="c-tools">
         <button class="ctool" data-fmt="bold" title="Bold (⌘B)"><b>B</b></button>
         <button class="ctool" data-fmt="italic" title="Italic (⌘I)"><i>I</i></button>
@@ -201,7 +204,7 @@
   <div class="contacts-card">
     <div class="contacts-head">
       <h2>Contacts</h2>
-      <button class="iconbtn" id="contacts-close" title="Close">✕</button>
+      <button class="iconbtn" id="contacts-close" title="Close"><svg viewBox="0 0 24 24" class="ic"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
     </div>
     <form id="contact-form" class="contact-add">
       <input id="contact-name" type="text" placeholder="Name" />
@@ -221,7 +224,7 @@
   </div>
 </div>
 
-<div class="toast" id="toast" hidden></div>
+<div class="toast-stack" id="toast-stack" role="status" aria-live="polite"></div>
 
 <script src="./jmap.js"></script>
 <script src="./app.js"></script>
