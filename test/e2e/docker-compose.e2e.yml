@@ -1,0 +1,80 @@
+# Closed-loop mail ecosystem for end-to-end testing:
+#   dns    — CoreDNS serving MX/SPF/DKIM/DMARC for a.test + b.test (static IP)
+#   mta-a  — vulos-mail for a.test (alice@a.test)
+#   mta-b  — vulos-mail for b.test (bob@b.test)
+#   runner — drives every protocol AND a real cross-server send→receive with
+#            DNS-based SPF/DKIM/DMARC verification.
+# The MTAs use `dns` as their resolver, so SPF/DKIM/DMARC/MX lookups hit our zone.
+networks:
+  mailnet:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+x-mta: &mta
+  build:
+    context: ../..
+    dockerfile: Dockerfile
+  user: root # bind privileged mail ports (25/587/143) inside the container
+  restart: "no"
+
+services:
+  dns:
+    image: coredns/coredns:1.11.1
+    command: ["-conf", "/etc/coredns/Corefile"]
+    volumes:
+      - ./Corefile:/etc/coredns/Corefile:ro
+      - ./zones/db.test:/etc/coredns/db.test:ro
+    networks:
+      mailnet:
+        ipv4_address: 172.28.0.10
+
+  mta-a:
+    <<: *mta
+    dns: ["172.28.0.10"]
+    environment:
+      VULOS_DOMAIN: a.test
+      VULOS_ACCOUNT: alice@a.test
+      VULOS_PASSWORD: pw
+      VULOS_MX_ADDR: ":25"
+      VULOS_SUBMIT_ADDR: ":587"
+      VULOS_IMAP_ADDR: ":143"
+      VULOS_JMAP_ADDR: ":8080"
+      VULOS_METRICS_ADDR: ":9090"
+    volumes:
+      - mta-a-data:/data
+      - ./data-a/dkim:/data/dkim:ro
+    networks:
+      mailnet:
+        ipv4_address: 172.28.0.20
+    depends_on: [dns]
+
+  mta-b:
+    <<: *mta
+    dns: ["172.28.0.10"]
+    environment:
+      VULOS_DOMAIN: b.test
+      VULOS_ACCOUNT: bob@b.test
+      VULOS_PASSWORD: pw
+      VULOS_MX_ADDR: ":25"
+      VULOS_SUBMIT_ADDR: ":587"
+      VULOS_IMAP_ADDR: ":143"
+      VULOS_JMAP_ADDR: ":8080"
+      VULOS_METRICS_ADDR: ":9090"
+    volumes:
+      - mta-b-data:/data
+      - ./data-b/dkim:/data/dkim:ro
+    networks:
+      mailnet:
+        ipv4_address: 172.28.0.30
+    depends_on: [dns]
+
+  runner:
+    build:
+      context: ./runner
+    networks: [mailnet] # default Docker DNS → resolves service names mta-a/mta-b
+    depends_on: [mta-a, mta-b]
+
+volumes:
+  mta-a-data:
+  mta-b-data:

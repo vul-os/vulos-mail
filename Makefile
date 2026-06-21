@@ -1,4 +1,4 @@
-.PHONY: build test race cover vet fullstack docker-build docker-up smoke
+.PHONY: build test race cover vet fullstack e2e test-all docker-build docker-up smoke
 
 build:
 	go build -o bin/vulos-mail ./cmd/vulos-mail
@@ -17,9 +17,18 @@ cover:
 	go test -coverprofile=cover.out ./...
 	@go tool cover -func=cover.out | tail -1
 
-# The closed-loop full-system simulation (all protocols, offline).
+# The in-process closed-loop simulation (all protocols wired together, offline).
 fullstack:
-	go test ./internal/server/ -run TestFullStackSimulation -v
+	go test ./internal/server/ -run TestEndToEndAllProtocols -v
+
+# Full Dockerized ecosystem: private DNS + two mail servers delivering to each
+# other, all protocols, plus real over-the-wire SPF/DKIM/DMARC verification.
+e2e:
+	./test/e2e/run.sh
+
+# Everything runnable locally: vet, race-checked unit/integration, then the
+# Dockerized cross-server ecosystem.
+test-all: vet race e2e
 
 docker-build:
 	docker build -t vulos-mail:dev .

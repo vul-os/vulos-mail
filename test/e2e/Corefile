@@ -1,0 +1,13 @@
+# Private DNS for the closed-loop mail ecosystem. The "test" zone is served from
+# db.test (MX / A / SPF / DKIM / DMARC for a.test and b.test); everything else is
+# forwarded to Docker's embedded resolver so service names still work.
+test {
+    file /etc/coredns/db.test
+    log
+    errors
+}
+. {
+    forward . 127.0.0.11
+    log
+    errors
+}
