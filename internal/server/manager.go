@@ -84,6 +84,9 @@ type Manager struct {
 
 	sendMu sync.Mutex
 	sends  map[string]*daySend // account -> today's send count (plan/tier enforcement)
+
+	planMu    sync.Mutex
+	planCache map[string]planEntry // account -> last-known entitlement (bounded fail-open)
 }
 
 type pushTok struct {
@@ -96,18 +99,29 @@ type daySend struct {
 	n   int
 }
 
+type planEntry struct {
+	plan seam.Plan
+	at   time.Time
+}
+
+// planTTL bounds how long a cached entitlement is trusted after a cp error, so a
+// brief control-plane outage preserves the last-known plan (incl. suspension)
+// instead of silently failing fully open.
+const planTTL = 90 * time.Second
+
 // NewManager creates a manager rooted at dir, using blobs for bodies and sched
 // for outbound (sched may be nil if sending is disabled).
 func NewManager(dir string, blobs blob.Store, sched *mtaout.Scheduler) *Manager {
 	return &Manager{
 		dir: dir, blobs: blobs, gen: ids.NewGen(), sched: sched,
-		LogOpen:  func(d string) (eventlog.Log, error) { return eventlog.OpenFile(filepath.Join(d, "log.jsonl"), nil) },
-		Signer:   dkim.NewSigner(),
-		accounts: map[string]*account.Runtime{},
-		creds:    map[string][]byte{},
-		sends:    map[string]*daySend{},
-		subs:     map[string]map[chan struct{}]bool{},
-		tokens:   map[string]pushTok{},
+		LogOpen:   func(d string) (eventlog.Log, error) { return eventlog.OpenFile(filepath.Join(d, "log.jsonl"), nil) },
+		Signer:    dkim.NewSigner(),
+		accounts:  map[string]*account.Runtime{},
+		creds:     map[string][]byte{},
+		sends:     map[string]*daySend{},
+		planCache: map[string]planEntry{},
+		subs:      map[string]map[chan struct{}]bool{},
+		tokens:    map[string]pushTok{},
 	}
 }
 
@@ -279,6 +293,15 @@ func (m *Manager) Deliver(ctx context.Context, rcpt string, raw []byte) error {
 	if err != nil {
 		return err
 	}
+	// Storage cap (when an entitlement source is configured): refuse delivery that
+	// would push the mailbox past its plan's storage allowance. A temporary 452 so
+	// the sender retries rather than hard-bounces.
+	if plan, ok := m.planFor(rcpt); ok && plan.MaxBytes > 0 {
+		if rt.MailboxBytes()+int64(len(raw)) > plan.MaxBytes {
+			metrics.MessagesReceived.WithLabelValues("overquota").Inc()
+			return errors.New("452 4.2.2 mailbox is over its storage quota")
+		}
+	}
 	label := model.LabelInbox
 	if m.Inbound != nil {
 		switch v := m.Inbound.Scan(ctx, raw); v.Action {
@@ -291,6 +314,10 @@ func (m *Manager) Deliver(ctx context.Context, rcpt string, raw []byte) error {
 	}
 	if _, err = rt.Ingest(ctx, raw, []model.LabelID{label}, nil); err != nil {
 		return err
+	}
+	// Meter stored bytes so the control plane can bill/track mailbox storage.
+	if m.Usage != nil {
+		m.Usage.Report(ctx, seam.Event{Kind: "storage", Account: rcpt, Bytes: int64(len(raw))})
 	}
 	if label == model.LabelInbox {
 		metrics.MessagesReceived.WithLabelValues("inbox").Inc()
@@ -536,7 +563,9 @@ func (m *Manager) SendRaw(_ context.Context, from string, to []string, raw []byt
 		})
 	}
 	if m.Usage != nil {
-		m.Usage.Report(context.Background(), seam.Event{Kind: "send", Account: from, Count: int64(len(to)), Bytes: int64(len(raw))})
+		// One send == one message (matches the daily send-cap gate in allowPlanSend,
+		// which counts messages, not recipients).
+		m.Usage.Report(context.Background(), seam.Event{Kind: "send", Account: from, Count: 1, Bytes: int64(len(raw))})
 	}
 	return nil
 }
@@ -585,12 +614,9 @@ func (m *Manager) checkCred(username, password string) bool {
 // no entitlement source (standalone) this is a no-op. Entitlement-lookup errors
 // fail OPEN — a cp blip must never wedge the send path.
 func (m *Manager) allowPlanSend(account string) error {
-	if m.Plans == nil {
-		return nil
-	}
-	plan, err := m.Plans.For(context.Background(), strings.ToLower(account))
-	if err != nil {
-		return nil // fail-open on entitlement-source error
+	plan, ok := m.planFor(account)
+	if !ok {
+		return nil // no entitlement source (standalone) or cold cp error → allow
 	}
 	if plan.Suspended {
 		return errors.New("account suspended")
@@ -612,6 +638,32 @@ func (m *Manager) allowPlanSend(account string) error {
 	}
 	ds.n++
 	return nil
+}
+
+// planFor returns the account's entitlement and whether one is known. It caches
+// the last-known plan; on a cp error it serves the cached value while still fresh
+// (so suspension/caps survive a brief outage), and only when there's no fresh
+// cache does it report "unknown" (ok=false → callers fail open for availability).
+// nil Plans (standalone) always reports unknown.
+func (m *Manager) planFor(account string) (seam.Plan, bool) {
+	if m.Plans == nil {
+		return seam.Plan{}, false
+	}
+	key := strings.ToLower(account)
+	plan, err := m.Plans.For(context.Background(), key)
+	if err == nil {
+		m.planMu.Lock()
+		m.planCache[key] = planEntry{plan: plan, at: time.Now()}
+		m.planMu.Unlock()
+		return plan, true
+	}
+	m.planMu.Lock()
+	e, cached := m.planCache[key]
+	m.planMu.Unlock()
+	if cached && time.Since(e.at) < planTTL {
+		return e.plan, true // bounded fail-open: trust last-known entitlement
+	}
+	return seam.Plan{}, false // cold: fail open for availability
 }
 
 func tenantOf(address string) string {

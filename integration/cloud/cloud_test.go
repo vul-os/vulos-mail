@@ -36,7 +36,10 @@ func TestCloudAdapterAgainstStub(t *testing.T) {
 			sawAuth = true
 			_ = json.NewEncoder(w).Encode(map[string]string{"account": "alice@vulos.to"})
 		case "/api/entitlements":
-			_ = json.NewEncoder(w).Encode(map[string]any{"tier": "pro", "max_send_per_day": 500, "suspended": false})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"tier": "pro", "max_send_per_day": 500, "max_bytes": 26843545600,
+				"max_addresses": 5, "suspended": false,
+			})
 		case "/api/usage":
 			sawMetered = true
 			w.WriteHeader(http.StatusNoContent)
@@ -58,7 +61,7 @@ func TestCloudAdapterAgainstStub(t *testing.T) {
 	}
 
 	plan, err := cloud.NewEntitlements(c).For(ctx, "alice@vulos.to")
-	if err != nil || plan.Tier != "pro" || plan.MaxSendPerDay != 500 {
+	if err != nil || plan.Tier != "pro" || plan.MaxSendPerDay != 500 || plan.MaxBytes != 26843545600 || plan.MaxAddresses != 5 {
 		t.Fatalf("entitlements = %+v, %v", plan, err)
 	}
 

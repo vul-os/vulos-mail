@@ -231,6 +231,18 @@ func (r *Runtime) AllMail() []*model.Message {
 	return copyAll(r.proj.AllMail())
 }
 
+// MailboxBytes returns the total stored size of all live messages — the mailbox's
+// storage footprint, used to enforce a plan's storage cap.
+func (r *Runtime) MailboxBytes() int64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var n int64
+	for _, m := range r.proj.AllMail() {
+		n += m.Size
+	}
+	return n
+}
+
 // Labels returns copies of all labels.
 func (r *Runtime) Labels() []*model.Label {
 	r.mu.RLock()
