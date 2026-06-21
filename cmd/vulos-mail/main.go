@@ -6,8 +6,10 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 	"log"
 	"net"
@@ -134,6 +136,15 @@ func main() {
 			Cache:      autocert.DirCache(dataDir + "/acme"),
 			HostPolicy: autocert.HostWhitelist(strings.Split(domains, ",")...),
 			Email:      env("VULOS_ACME_EMAIL", ""),
+		}
+		// Optional: point at a custom ACME directory (e.g. a local Pebble/step-ca
+		// for testing). VULOS_ACME_INSECURE skips TLS verification of that endpoint.
+		if dir := env("VULOS_ACME_DIRECTORY", ""); dir != "" {
+			ac := &acme.Client{DirectoryURL: dir}
+			if env("VULOS_ACME_INSECURE", "") != "" {
+				ac.HTTPClient = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+			}
+			am.Client = ac
 		}
 		tlsCfg = am.TLSConfig()
 		go func() {

@@ -14,7 +14,16 @@ import (
 // multipart/report (report-type=delivery-status) per RFC 3464.
 func Build(reportingDomain, sender string, recipients []string, reason string) []byte {
 	const boundary = "vulos-dsn-boundary-9d2f"
+	// Sanitize every value that gets interpolated into a header so CRLF/control
+	// chars can't forge headers or extra MIME parts.
 	reason = sanitizeHeader(reason)
+	reportingDomain = sanitizeHeader(reportingDomain)
+	sender = sanitizeHeader(sender)
+	cleanRcpts := make([]string, len(recipients))
+	for i, r := range recipients {
+		cleanRcpts[i] = sanitizeHeader(r)
+	}
+	recipients = cleanRcpts
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "From: MAILER-DAEMON@%s\r\n", reportingDomain)
@@ -52,8 +61,13 @@ func Build(reportingDomain, sender string, recipients []string, reason string) [
 	return []byte(b.String())
 }
 
-// sanitizeHeader strips CR/LF so a reason/recipient can't inject headers or
-// extra MIME parts into the generated DSN.
+// sanitizeHeader strips CR/LF and other control characters so a value
+// interpolated into a header can't inject headers or extra MIME parts.
 func sanitizeHeader(s string) string {
-	return strings.NewReplacer("\r", " ", "\n", " ").Replace(s)
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
 }

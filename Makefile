@@ -1,4 +1,4 @@
-.PHONY: build test race cover vet fullstack e2e test-all docker-build docker-up smoke
+.PHONY: build test race cover vet fullstack fuzz e2e e2e-ext test-all docker-build docker-up smoke
 
 build:
 	go build -o bin/vulos-mail ./cmd/vulos-mail
@@ -21,14 +21,28 @@ cover:
 fullstack:
 	go test ./internal/server/ -run TestEndToEndAllProtocols -v
 
+# Fuzz the untrusted-input parsers (mail/MIME, log codec, DSN, A-R stripping).
+# FUZZTIME overrides the per-target duration (default 20s).
+FUZZTIME ?= 20s
+fuzz:
+	go test ./internal/mime/   -run '^$$' -fuzz '^FuzzParse$$'            -fuzztime=$(FUZZTIME)
+	go test ./internal/event/  -run '^$$' -fuzz '^FuzzDecode$$'          -fuzztime=$(FUZZTIME)
+	go test ./internal/dsn/    -run '^$$' -fuzz '^FuzzBuild$$'           -fuzztime=$(FUZZTIME)
+	go test ./adapters/smtp/   -run '^$$' -fuzz '^FuzzStripAuthResults$$' -fuzztime=$(FUZZTIME)
+
 # Full Dockerized ecosystem: private DNS + two mail servers delivering to each
 # other, all protocols, plus real over-the-wire SPF/DKIM/DMARC verification.
 e2e:
 	./test/e2e/run.sh
 
-# Everything runnable locally: vet, race-checked unit/integration, then the
-# Dockerized cross-server ecosystem.
-test-all: vet race e2e
+# Extended Docker matrix: alternate backends (SQLite, S3/minio), rspamd spam
+# scanning, ACME-via-Pebble cert issuance, hard-crash recovery, and load.
+e2e-ext:
+	./test/e2e/run-ext.sh
+
+# Everything runnable locally: vet, race-checked unit/integration, fuzz, then the
+# Dockerized cross-server ecosystem and the extended backend/ops matrix.
+test-all: vet race fuzz e2e e2e-ext
 
 docker-build:
 	docker build -t vulos-mail:dev .

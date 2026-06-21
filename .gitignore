@@ -7,3 +7,4 @@ cover*.out
 test/e2e/data-a/
 test/e2e/data-b/
 test/e2e/zones/
+/vulos-mail

@@ -1,0 +1,90 @@
+# Extended test matrix: alternate backends + sidecars that a single offline
+# instance can't exercise.
+#   minio       — S3-compatible object store for the blob backend
+#   rspamd      — real spam scanner (inbound filter integration)
+#   mta-sqlite  — server using the SQLite event-log backend
+#   mta-s3      — server storing message bodies in minio (S3)
+#   mta-rspamd  — server scanning inbound mail through rspamd
+#   ext-runner  — drives backend + spam + crash + load checks
+networks:
+  extnet:
+
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    networks: [extnet]
+
+  rspamd:
+    image: rspamd/rspamd:latest
+    networks: [extnet]
+
+  mta-sqlite:
+    build: { context: ../.., dockerfile: Dockerfile }
+    restart: on-failure
+    user: root
+    environment:
+      VULOS_DOMAIN: sqlite.test
+      VULOS_ACCOUNT: u@sqlite.test
+      VULOS_PASSWORD: pw
+      VULOS_DB: sqlite
+      VULOS_MX_ADDR: ":2525"
+      VULOS_SUBMIT_ADDR: ":2587"
+      VULOS_IMAP_ADDR: ":2143"
+      VULOS_JMAP_ADDR: ":2080"
+      VULOS_METRICS_ADDR: ":2090"
+    volumes: [mta-sqlite-data:/data]
+    networks: [extnet]
+
+  mta-s3:
+    build: { context: ../.., dockerfile: Dockerfile }
+    restart: on-failure # retry until minio is reachable at boot
+    user: root
+    environment:
+      VULOS_DOMAIN: s3.test
+      VULOS_ACCOUNT: u@s3.test
+      VULOS_PASSWORD: pw
+      VULOS_S3_ENDPOINT: minio:9000
+      VULOS_S3_KEY: minioadmin
+      VULOS_S3_SECRET: minioadmin
+      VULOS_S3_BUCKET: vulos-mail
+      VULOS_MX_ADDR: ":2525"
+      VULOS_SUBMIT_ADDR: ":2587"
+      VULOS_IMAP_ADDR: ":2143"
+      VULOS_JMAP_ADDR: ":2080"
+      VULOS_METRICS_ADDR: ":2090"
+    volumes: [mta-s3-data:/data]
+    depends_on: [minio]
+    networks: [extnet]
+
+  mta-rspamd:
+    build: { context: ../.., dockerfile: Dockerfile }
+    restart: on-failure
+    user: root
+    environment:
+      VULOS_DOMAIN: rspamd.test
+      VULOS_ACCOUNT: u@rspamd.test
+      VULOS_PASSWORD: pw
+      RSPAMD_URL: http://rspamd:11333
+      VULOS_MX_ADDR: ":2525"
+      VULOS_SUBMIT_ADDR: ":2587"
+      VULOS_IMAP_ADDR: ":2143"
+      VULOS_JMAP_ADDR: ":2080"
+      VULOS_METRICS_ADDR: ":2090"
+    volumes: [mta-rspamd-data:/data]
+    depends_on: [rspamd]
+    networks: [extnet]
+
+  ext-runner:
+    build:
+      context: ./ext-runner
+    networks: [extnet]
+    depends_on: [mta-sqlite, mta-s3, mta-rspamd]
+
+volumes:
+  mta-sqlite-data:
+  mta-s3-data:
+  mta-rspamd-data:
