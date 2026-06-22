@@ -159,5 +159,6 @@ settings, and bulk actions.
 
 ## License
 
-See repository headers. This project is part of the Vulos suite; the mail core
-is independent and self-hostable with no external service dependencies.
+[MIT](LICENSE) © Imran Paruk and Vulos Contributors. Part of the Vulos suite;
+the mail core is independent and self-hostable with no external service
+dependencies.
