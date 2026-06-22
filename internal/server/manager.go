@@ -604,10 +604,18 @@ func (m *Manager) checkCred(username, password string) bool {
 	hash, ok := m.creds[strings.ToLower(username)]
 	m.mu.Unlock()
 	if !ok {
+		// Compare against a dummy hash so a non-existent account costs the same as a
+		// wrong password (no username-enumeration timing oracle).
+		_ = bcrypt.CompareHashAndPassword(dummyCredHash, prehash(password))
 		return false
 	}
 	return bcrypt.CompareHashAndPassword(hash, prehash(password)) == nil
 }
+
+// dummyCredHash is a valid bcrypt hash used to equalise the timing of the
+// no-such-account path with a real wrong-password comparison. Plaintext is
+// irrelevant; it only needs to be a well-formed bcrypt hash.
+var dummyCredHash, _ = bcrypt.GenerateFromPassword(prehash("vulos-dummy-password"), bcrypt.DefaultCost)
 
 // allowPlanSend enforces the account's entitlement at send time: a suspended
 // account cannot send, and an account with a daily send cap is held to it. With

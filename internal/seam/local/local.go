@@ -20,6 +20,11 @@ import (
 	"github.com/vul-os/vulos-mail/internal/seam"
 )
 
+// dummyHash is a valid bcrypt hash compared against on the user-not-found path
+// so authentication takes ~the same time whether or not the account exists,
+// closing a username-enumeration timing oracle. Its plaintext is irrelevant.
+var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("vulos-dummy-password"), bcrypt.DefaultCost)
+
 // Identity is a persistent, file-backed account store implementing seam.Identity.
 // Credentials are bcrypt-hashed (over a sha256 prehash, so passwords longer than
 // bcrypt's 72-byte limit aren't truncated) and persisted atomically to a JSON
@@ -124,6 +129,9 @@ func (id *Identity) Authenticate(_ context.Context, username, password string) (
 	h, ok := id.users[username]
 	id.mu.Unlock()
 	if !ok {
+		// Compare against a dummy hash so the no-such-user path costs the same as a
+		// wrong-password path (no username-enumeration timing oracle).
+		_ = bcrypt.CompareHashAndPassword(dummyHash, prehash(password))
 		return "", errors.New("local: invalid credentials")
 	}
 	if bcrypt.CompareHashAndPassword(h, prehash(password)) != nil {
