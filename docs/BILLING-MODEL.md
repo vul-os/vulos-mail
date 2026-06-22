@@ -53,18 +53,40 @@ Notes that matter for the model:
 - Fly egress + Hetzner traffic are generous/included at this scale; revisit at
   100k+ users (storage ~370 TB → ~$2k/mo, same per-user rate).
 
-## 4. Tier model (cp-owned)
+## 4. Tier model (cp-owned) — the unified table
 
-`free` · `pro` · `team` · `enterprise`. Each product maps tier → its own limits
-via `Entitlements.For(account)`:
+`free` · `pro` · `team` · `enterprise` (subscription prices in cp: free $0 / pro $9
+/ team $12 / enterprise $99 per month — **see the pricing caveat below**). Every
+billable surface across **every product** now maps onto these four tiers (no
+surface is off-model), exposed via cp `Entitlements.For(account, product)` and
+enforced by each product:
 
-| Surface | free | pro | team/ent |
-|---|---|---|---|
-| Mail storage | ~1 GB | ~25 GB | higher |
-| Mail send/day | low (warmup-ramped) | higher | custom |
-| Mail addresses/aliases | 1 | many | many + domains |
-| Office storage / seats | small / 1 | larger / few | larger / many |
-| Cloud compute / GPU / relay GB | gated/0 | included | scaled |
+| Surface | free | pro | team | enterprise |
+|---|---|---|---|---|
+| **Mail** send/day | 200 | 2,000 | 10,000 | 100,000 |
+| Mail mailbox | 1 GiB | 25 GiB | 100 GiB | 500 GiB |
+| Mail addresses | 1 | 5 | 25 | 500 |
+| **Office** storage | 2 GiB | 50 GiB | 200 GiB | 1 TiB |
+| Office seats | 1 | 3 | 25 | 500 |
+| **Meet** recording min/mo | 60 | 600 | 3,000 | 9,000 |
+| **LLM** budget/mo | $0.50 | $10 | $50 | $500 |
+| **Compute** boxes / storage | 1 / 0.1 GB | 3 / 50 GB | 10 / 200 GB | 50 / 500 GB |
+| **GPU** | none | PAYG | PAYG | PAYG |
+| **Relay** GB | 5 | 25 | 30 | 60 |
+| TURN sessions | — | 100 | 200 | 1,000 |
+| Tier **storage** GB | 5 | 50 | 100 | 500 |
+| Public circuits | — | 50 | 200 | 1,000 |
+
+Every ladder is **monotonic** (regression-guarded by tests) and **suspension is
+authoritative on all of them** — an admin hard-suspend or billing lapse collapses
+the account to free across mail/office/meet/llm/compute/relay/gpu at once.
+
+> **Pricing caveat (a business decision, not a code one):** the *resource ladders*
+> above are coherent, but the *prices* ($0/$9/$12/$99) predate them and the
+> $/resource curve is off — team ($12) grants far more than pro ($9) for +$3,
+> while enterprise jumps to $99. Set prices that reflect the ladders (likely:
+> raise team, and/or make team per-seat). The technical model doesn't care; the
+> P&L does.
 
 ## 5. The no-holes audit
 
@@ -74,13 +96,16 @@ Every billable action must satisfy **three guarantees**:
 > **Metered** — recorded to `metered_events` on the same call ·
 > **Bypass-proof** — server-side, pre-issuance, race-safe.
 
-### Per-product status
+### Per-product status (post-audit fixes)
 
-| Product | Billable surface | State | Hole to close |
-|---|---|---|---|
-| Cloud | compute, storage, relay GB, GPU, meet | gated + metered (audited) | real-time vs last-sample storage |
-| **Office** | storage bytes, seats, office-access | **seam wired, not yet enforcing** | enforce storage/seat caps on upload/invite; gate office access by tier; emit usage |
-| **Mail** | mailbox bytes, send/day, #addresses | local `tenant.Quota`+`abuse`; seam wired; honors cp suspension | map cp tier→`tenant.Quota`; meter bytes+sends; gate alias/address count |
+| Product | Billable surface | State |
+|---|---|---|
+| **cp** (control plane) | tier tables, entitlements, usage, dunning/suspension | reference impl; all surfaces on the 4-tier model; hard-suspend authoritative everywhere |
+| **Mail** | send/day, mailbox bytes, addresses | ✅ gated (send cap + storage cap) + metered (send + storage) + bounded-cache fail-open; suspension blocks send not read |
+| **Office** | storage, seats, office-access, recordings | ✅ gated + metered; unauthenticated-recordings hole closed; atomic check-and-reserve (TOCTOU closed); seats count real members |
+| **llmux** | LLM token spend | ✅ every route metered (chat/embeddings/forward/streaming); race-safe budget reservations; retry-queued usage |
+| **vulos OS** | compute, relay, GPU, meet, LLM | ✅ cp billing client gates + meters + honors suspension on every surface (was: none) |
+| **Meet** | participant-minutes, rooms | 🔄 per-tier minutes on-model + gate-at-mint; minutes-metering → cp **in progress** |
 
 ### Cross-cutting holes (the subtle, suite-wide ones)
 
