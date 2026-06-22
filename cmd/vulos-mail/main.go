@@ -648,8 +648,9 @@ func main() {
 	})
 
 	// Webmail static UI at the root (registered last; longest-prefix routing keeps
-	// the API/DAV/JMAP handlers above taking precedence).
-	if dir := env("VULOS_WEBMAIL_DIR", "./webmail"); dir != "" {
+	// the API/DAV/JMAP handlers above taking precedence). The webmail is a
+	// React+Vite SPA built into ./webmail/dist (run `cd webmail && npm run build`).
+	if dir := env("VULOS_WEBMAIL_DIR", "./webmail/dist"); dir != "" {
 		httpMux.Handle("/", http.FileServer(http.Dir(dir)))
 	}
 

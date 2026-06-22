@@ -27,9 +27,12 @@ fi
 cleanup() { kill "${SRV:-}" 2>/dev/null || true; rm -rf "$DATA" "$BIN"; }
 trap cleanup EXIT
 
+echo "== building React webmail (Vite) =="
+( cd "$ROOT/webmail" && npm ci --silent --no-audit --no-fund && npm run build )
+
 echo "== building + booting server (plaintext) =="
 ( cd "$ROOT" && go build -o "$BIN" ./cmd/vulos-mail )
-VULOS_DATA_DIR="$DATA" VULOS_ACCOUNT="$USER" VULOS_PASSWORD="$PW" VULOS_WEBMAIL_DIR="$ROOT/webmail" \
+VULOS_DATA_DIR="$DATA" VULOS_ACCOUNT="$USER" VULOS_PASSWORD="$PW" VULOS_WEBMAIL_DIR="$ROOT/webmail/dist" \
   VULOS_MX_ADDR="127.0.0.1:$PORT_MX" VULOS_SUBMIT_ADDR="127.0.0.1:18587" VULOS_IMAP_ADDR="127.0.0.1:18143" \
   VULOS_JMAP_ADDR="127.0.0.1:$PORT_JMAP" VULOS_METRICS_ADDR="127.0.0.1:18090" "$BIN" >/tmp/webtest-srv.log 2>&1 &
 SRV=$!

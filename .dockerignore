@@ -3,3 +3,6 @@ data
 bin
 cover.out
 *.test
+webmail/node_modules
+webmail/dist
+test/webmail/node_modules

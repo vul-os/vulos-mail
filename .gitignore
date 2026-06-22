@@ -12,3 +12,5 @@ test/e2e/zones/
 __pycache__/
 *.pyc
 test/webmail/node_modules/
+webmail/node_modules/
+webmail/dist/

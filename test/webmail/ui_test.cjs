@@ -42,17 +42,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.waitForSelector(".row", { timeout: 10000 }).catch(() => {});
   check("login → app visible", await page.$("#app") != null);
 
-  // ---- brand logo: the Vulos "V" envelope-flap mark is served, used as the
+  // ---- brand logo: the new vulos-mail.png mark is served, used as the
   //      brand mark, and set as the favicon ----
   const logo = await page.evaluate(async () => {
     const el = document.querySelector(".logo");
     const bg = el ? getComputedStyle(el).backgroundImage : "";
-    const fav = !!document.querySelector('link[rel="icon"][href*="logo.svg"]');
-    let svg = false;
-    try { const r = await fetch("./logo.svg"); svg = r.ok && (await r.text()).includes("<svg"); } catch {}
-    return { el: !!el, bg: bg.includes("logo.svg"), fav, svg };
+    const fav = !!document.querySelector('link[rel="icon"][href*="vulos-mail.png"]');
+    let png = false;
+    try {
+      const r = await fetch("./vulos-mail.png");
+      if (r.ok) { const b = new Uint8Array(await r.arrayBuffer()); png = b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47; }
+    } catch {}
+    return { el: !!el, bg: bg.includes("vulos-mail.png"), fav, png };
   });
-  check("Vulos Mail logo renders + is the favicon", logo.el && logo.bg && logo.fav && logo.svg, JSON.stringify(logo));
+  check("Vulos Mail logo renders + is the favicon", logo.el && logo.bg && logo.fav && logo.png, JSON.stringify(logo));
 
   // ---- inbox list ----
   const rowCount = await page.$$eval(".row", (r) => r.length);
