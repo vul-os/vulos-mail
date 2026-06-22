@@ -30,6 +30,7 @@ import (
 	cloud "github.com/vul-os/vulos-mail/integration/cloud"
 	"github.com/vul-os/vulos-mail/internal/abuse"
 	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/authlimit"
 	"github.com/vul-os/vulos-mail/internal/blob"
 	"github.com/vul-os/vulos-mail/internal/compose"
 	"github.com/vul-os/vulos-mail/internal/emailauth"
@@ -260,28 +261,36 @@ func main() {
 	// Outbound abuse filter (rate + recipient-burst auto-suspend).
 	abuseFilter := abuse.New(abuse.Config{})
 
+	// Inbound credential-check brute-force limiter, shared across IMAP, SMTP
+	// submission, and JMAP Basic auth (keyed per client IP and per account).
+	authLimiter := authlimit.New(authlimit.Config{})
+
 	// Listeners.
 	authn := &emailauth.Authenticator{} // real DNS
 	mx := smtpin.NewServer(&smtpin.Backend{
 		Deliver:    mgr.Deliver,
 		AuthServID: domain,
 		KnownRcpt:  mgr.IsLocal, // reject unknown recipients at RCPT (550 5.1.1)
-		Verify: func(raw []byte, ip net.IP, helo, mailFrom string) string {
+		VerifyVerdict: func(raw []byte, ip net.IP, helo, mailFrom string) smtpin.AuthVerdict {
 			// Bound DNS-backed auth (SPF/DMARC) so a slow/dead resolver can never
 			// stall the delivery path.
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			return authn.Verify(ctx, raw, ip, helo, mailFrom).AuthResults()
+			res := authn.Verify(ctx, raw, ip, helo, mailFrom)
+			// Enforce DMARC only at p=reject; quarantine/none stay annotate-only.
+			reject := res.DMARC == "fail" && res.DMARCPolicy == "reject"
+			return smtpin.AuthVerdict{AuthResults: res.AuthResults(), Reject: reject}
 		},
 	}, mxAddr, domain)
 	mx.TLSConfig = tlsCfg
-	sub := smtpin.NewSubmitServer(&smtpin.SubmitBackend{Auth: mgr.AuthSubmit, Enqueue: mgr.Enqueue, Signer: mgr.Signer, Abuse: abuseFilter, Quota: mgr.CheckQuota}, subAddr, domain)
+	sub := smtpin.NewSubmitServer(&smtpin.SubmitBackend{Auth: mgr.AuthSubmit, Enqueue: mgr.Enqueue, Signer: mgr.Signer, Abuse: abuseFilter, Quota: mgr.CheckQuota, Limiter: authLimiter}, subAddr, domain)
 	sub.TLSConfig = tlsCfg
-	imapBe := &imapadapter.Backend{Auth: func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) }}
+	imapBe := &imapadapter.Backend{Auth: func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) }, Limiter: authLimiter}
 	imapSrv := imapadapter.NewServer(imapBe, tlsCfg)
 
 	jmapBe := &jmapadapter.Backend{
-		Auth: func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) },
+		Auth:    func(u, p string) (*account.Runtime, error) { return mgr.AuthIMAP(u, p) },
+		Limiter: authLimiter,
 		Submit: func(ctx context.Context, account string, raw []byte) error {
 			env, err := mime.ParseEnvelope(raw)
 			if err != nil {
@@ -320,8 +329,19 @@ func main() {
 	// Self-serve signup (anti-abuse gated) — provisions handle@domain via the
 	// active identity provider. Disabled when VULOS_SIGNUP=off.
 	if env("VULOS_SIGNUP", "") != "off" {
+		signupRate := 10
+		if v := env("VULOS_SIGNUP_RATE_PER_HOUR", ""); v != "" {
+			if n, e := strconv.Atoi(v); e == nil && n > 0 {
+				signupRate = n
+			}
+		}
+		var trustedProxies []string
+		if v := env("VULOS_TRUSTED_PROXIES", ""); v != "" {
+			trustedProxies = strings.Split(v, ",")
+		}
 		signupH := signup.Handler(signup.Config{
 			Domain: domain, Gate: signupGate, Issuer: signupIssuer, Provision: mgr.AddAccount,
+			RatePerHour: signupRate, TrustedProxies: trustedProxies,
 		})
 		httpMux.Handle("/api/signup", signupH)  // exact: create account
 		httpMux.Handle("/api/signup/", signupH) // subtree: /challenge

@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"net"
 	"strings"
 
 	"github.com/emersion/go-imap/v2"
@@ -19,6 +20,7 @@ import (
 	"github.com/emersion/go-message/textproto"
 
 	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/authlimit"
 	"github.com/vul-os/vulos-mail/internal/mime"
 	"github.com/vul-os/vulos-mail/internal/model"
 )
@@ -29,6 +31,9 @@ const delim = '/'
 type Backend struct {
 	// Auth returns the runtime for the given credentials, or an error.
 	Auth func(username, password string) (*account.Runtime, error)
+	// Limiter, if set, throttles brute-force LOGIN attempts per client IP and
+	// per account (failed attempts lock out; a success resets).
+	Limiter *authlimit.Limiter
 }
 
 // NewServer builds a go-imap server over this backend. TLS optional (STARTTLS).
@@ -41,8 +46,18 @@ func NewServer(be *Backend, tlsConfig *tls.Config) *imapserver.Server {
 	})
 }
 
-func (b *Backend) newSession(_ *imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
-	return &session{backend: b}, nil, nil
+func (b *Backend) newSession(c *imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
+	var ip string
+	if c != nil {
+		if nc := c.NetConn(); nc != nil {
+			if host, _, err := net.SplitHostPort(nc.RemoteAddr().String()); err == nil {
+				ip = host
+			} else {
+				ip = nc.RemoteAddr().String()
+			}
+		}
+	}
+	return &session{backend: b, remoteIP: ip}, nil, nil
 }
 
 type selMsg struct {
@@ -52,8 +67,9 @@ type selMsg struct {
 }
 
 type session struct {
-	backend *Backend
-	rt      *account.Runtime
+	backend  *Backend
+	remoteIP string
+	rt       *account.Runtime
 
 	// selected-state
 	selLabel    model.LabelID
@@ -80,9 +96,19 @@ func (s *session) Close() error {
 // --- not-authenticated state ---
 
 func (s *session) Login(username, password string) error {
+	lim := s.backend.Limiter
+	if lim != nil && lim.AnyLocked(s.remoteIP, username) {
+		return &imap.Error{Type: imap.StatusResponseTypeNo, Code: imap.ResponseCodeAuthenticationFailed, Text: "too many failed attempts; try again later"}
+	}
 	rt, err := s.backend.Auth(username, password)
 	if err != nil {
+		if lim != nil {
+			lim.Fail(s.remoteIP, username)
+		}
 		return &imap.Error{Type: imap.StatusResponseTypeNo, Code: imap.ResponseCodeAuthenticationFailed, Text: "invalid credentials"}
+	}
+	if lim != nil {
+		lim.Success(s.remoteIP, username)
 	}
 	s.rt = rt
 	return nil

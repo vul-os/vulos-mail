@@ -12,11 +12,13 @@ package jmap
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
 
 	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/authlimit"
 	"github.com/vul-os/vulos-mail/internal/compose"
 	"github.com/vul-os/vulos-mail/internal/mime"
 	"github.com/vul-os/vulos-mail/internal/model"
@@ -28,6 +30,9 @@ type Backend struct {
 	// Submit, if set, sends a raw message on behalf of account (for
 	// EmailSubmission/set). Without it, submission fails with forbidden.
 	Submit func(ctx context.Context, account string, raw []byte) error
+	// Limiter, if set, throttles brute-force Basic-auth attempts per client IP
+	// and per account (failed attempts lock out; a success resets).
+	Limiter *authlimit.Limiter
 }
 
 // Handler returns the JMAP HTTP handler (/jmap/session and /jmap/api).
@@ -48,13 +53,34 @@ func (b *Backend) withAuth(fn authedFunc) http.HandlerFunc {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		ip := remoteIP(r)
+		if b.Limiter != nil && b.Limiter.AnyLocked(ip, user) {
+			http.Error(w, "too many failed attempts; try again later", http.StatusTooManyRequests)
+			return
+		}
 		rt, err := b.Auth(user, pass)
 		if err != nil {
+			if b.Limiter != nil {
+				b.Limiter.Fail(ip, user)
+			}
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		if b.Limiter != nil {
+			b.Limiter.Success(ip, user)
+		}
 		fn(w, r, rt, user)
 	}
+}
+
+// remoteIP returns the connecting peer's IP. It deliberately uses RemoteAddr
+// (not X-Forwarded-For) so the brute-force key can't be spoofed by a client
+// header; a fronting proxy should rewrite RemoteAddr or terminate auth itself.
+func remoteIP(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

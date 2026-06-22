@@ -12,6 +12,7 @@ import (
 
 	smtpin "github.com/vul-os/vulos-mail/adapters/smtp"
 	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/authlimit"
 	"github.com/vul-os/vulos-mail/internal/blob"
 	"github.com/vul-os/vulos-mail/internal/dkim"
 	"github.com/vul-os/vulos-mail/internal/eventlog"
@@ -100,6 +101,61 @@ func TestSubmissionStoresSentAndEnqueues(t *testing.T) {
 	}
 	if !domains["gmail.com"] || !domains["yahoo.com"] {
 		t.Errorf("destination domains = %v", domains)
+	}
+}
+
+// TestSubmissionBruteForceThrottled proves repeated failed AUTH PLAIN attempts
+// lock the source out (even a subsequent correct password fails), and that the
+// correct password works again once the lockout window elapses.
+func TestSubmissionBruteForceThrottled(t *testing.T) {
+	ctx := context.Background()
+	store, _ := blob.NewFS(t.TempDir())
+	log := eventlog.NewMem(func() time.Time { return time.Unix(0, 0).UTC() })
+	rt, _ := account.Open(ctx, log, store, ids.NewGen(), nil)
+
+	clock := time.Unix(0, 0).UTC()
+	lim := authlimit.New(authlimit.Config{MaxFailures: 3, Window: time.Hour, Lockout: 10 * time.Minute, Now: func() time.Time { return clock }})
+
+	be := &smtpin.SubmitBackend{
+		Auth: func(u, p string) (*account.Runtime, string, error) {
+			if u == "alice@vulos.to" && p == "secret" {
+				return rt, "tenant-a", nil
+			}
+			return nil, "", gosmtp.ErrAuthFailed
+		},
+		Enqueue: func(mtaout.OutMessage) {},
+		Limiter: lim,
+	}
+	srv := smtpin.NewSubmitServer(be, "127.0.0.1:0", "vulos.to")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go srv.Serve(ln)
+
+	auth := func(pass string) error {
+		c, err := gosmtp.Dial(ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		return c.Auth(sasl.NewPlainClient("", "alice@vulos.to", pass))
+	}
+
+	for i := 0; i < 3; i++ {
+		if err := auth("wrong"); err == nil {
+			t.Fatalf("attempt %d: wrong password should fail", i)
+		}
+	}
+	// Locked: even the correct password is refused.
+	if err := auth("secret"); err == nil {
+		t.Fatal("correct password should be refused after lockout")
+	}
+	// Lockout elapses → correct password works again.
+	clock = clock.Add(11 * time.Minute)
+	if err := auth("secret"); err != nil {
+		t.Fatalf("correct password should work after lockout expires: %v", err)
 	}
 }
 

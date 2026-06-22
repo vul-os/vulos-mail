@@ -3,6 +3,7 @@ package smtpin
 import (
 	"context"
 	"io"
+	"net"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/vul-os/vulos-mail/internal/abuse"
 	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/authlimit"
 	"github.com/vul-os/vulos-mail/internal/dkim"
 	"github.com/vul-os/vulos-mail/internal/mime"
 	"github.com/vul-os/vulos-mail/internal/model"
@@ -36,10 +38,21 @@ type SubmitBackend struct {
 	Abuse *abuse.Filter
 	// Quota, if set, enforces per-tenant daily send limits (over quota → 452).
 	Quota func(account string, msgBytes int) error
+	// Limiter, if set, throttles brute-force AUTH attempts per client IP and per
+	// account (failed attempts lock out; a success resets).
+	Limiter *authlimit.Limiter
 }
 
-func (b *SubmitBackend) NewSession(_ *gosmtp.Conn) (gosmtp.Session, error) {
-	return &submitSession{backend: b}, nil
+func (b *SubmitBackend) NewSession(c *gosmtp.Conn) (gosmtp.Session, error) {
+	var ip string
+	if c != nil && c.Conn() != nil {
+		if host, _, err := net.SplitHostPort(c.Conn().RemoteAddr().String()); err == nil {
+			ip = host
+		} else {
+			ip = c.Conn().RemoteAddr().String()
+		}
+	}
+	return &submitSession{backend: b, remoteIP: ip}, nil
 }
 
 // NewSubmitServer builds an MSA server. AllowInsecureAuth is enabled for local/
@@ -57,21 +70,32 @@ func NewSubmitServer(be *SubmitBackend, addr, domain string) *gosmtp.Server {
 }
 
 type submitSession struct {
-	backend *SubmitBackend
-	rt      *account.Runtime
-	tenant  string
-	account string
-	from    string
-	rcpts   []string
+	backend  *SubmitBackend
+	remoteIP string
+	rt       *account.Runtime
+	tenant   string
+	account  string
+	from     string
+	rcpts    []string
 }
 
 func (s *submitSession) AuthMechanisms() []string { return []string{sasl.Plain} }
 
 func (s *submitSession) Auth(string) (sasl.Server, error) {
 	return sasl.NewPlainServer(func(_, username, password string) error {
+		lim := s.backend.Limiter
+		if lim != nil && lim.AnyLocked(s.remoteIP, username) {
+			return gosmtp.ErrAuthFailed
+		}
 		rt, tenant, err := s.backend.Auth(username, password)
 		if err != nil {
+			if lim != nil {
+				lim.Fail(s.remoteIP, username)
+			}
 			return gosmtp.ErrAuthFailed
+		}
+		if lim != nil {
+			lim.Success(s.remoteIP, username)
 		}
 		s.rt = rt
 		s.tenant = tenant

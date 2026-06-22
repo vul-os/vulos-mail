@@ -11,6 +11,7 @@ import (
 
 	jmapadapter "github.com/vul-os/vulos-mail/adapters/jmap"
 	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/authlimit"
 	"github.com/vul-os/vulos-mail/internal/blob"
 	"github.com/vul-os/vulos-mail/internal/eventlog"
 	"github.com/vul-os/vulos-mail/internal/ids"
@@ -141,6 +142,92 @@ func TestJMAPRejectsBadCredentials(t *testing.T) {
 	resp2.Body.Close()
 	if resp2.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("bad creds: want 401, got %d", resp2.StatusCode)
+	}
+}
+
+// TestJMAPBruteForceThrottled proves the brute-force limiter: repeated wrong
+// passwords lock out the source (429), and a key that has not exhausted its
+// budget — here the *correct* password arriving before lockout — still works.
+func TestJMAPBruteForceThrottled(t *testing.T) {
+	now := time.Unix(0, 0).UTC()
+	lim := authlimit.New(authlimit.Config{MaxFailures: 3, Window: time.Hour, Lockout: time.Hour, Now: func() time.Time { return now }})
+
+	be := &jmapadapter.Backend{
+		Auth: func(_, pass string) (*account.Runtime, error) {
+			if pass == "correct-horse" {
+				return mkRuntime(t), nil
+			}
+			return nil, errInvalid
+		},
+		Limiter: lim,
+	}
+	srv := httptest.NewServer(be.Handler())
+	defer srv.Close()
+
+	do := func(pass string) int {
+		req, _ := http.NewRequest("GET", srv.URL+"/jmap/session", nil)
+		req.SetBasicAuth("alice@vulos.to", pass)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	// 3 failures (MaxFailures) — all 401, none yet locked.
+	for i := 0; i < 3; i++ {
+		if got := do("wrong"); got != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: want 401, got %d", i, got)
+		}
+	}
+	// Next attempt is refused before the credential check (429), even though a
+	// *correct* password is supplied — the account/IP is now locked.
+	if got := do("correct-horse"); got != http.StatusTooManyRequests {
+		t.Fatalf("after lockout: want 429, got %d", got)
+	}
+}
+
+// TestJMAPCorrectPasswordResets proves a successful auth clears the failure
+// history so a legitimate user's earlier typos never lock them out.
+func TestJMAPCorrectPasswordResets(t *testing.T) {
+	now := time.Unix(0, 0).UTC()
+	lim := authlimit.New(authlimit.Config{MaxFailures: 3, Window: time.Hour, Lockout: time.Hour, Now: func() time.Time { return now }})
+	be := &jmapadapter.Backend{
+		Auth: func(_, pass string) (*account.Runtime, error) {
+			if pass == "correct-horse" {
+				return mkRuntime(t), nil
+			}
+			return nil, errInvalid
+		},
+		Limiter: lim,
+	}
+	srv := httptest.NewServer(be.Handler())
+	defer srv.Close()
+
+	do := func(pass string) int {
+		req, _ := http.NewRequest("GET", srv.URL+"/jmap/session", nil)
+		req.SetBasicAuth("alice@vulos.to", pass)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	// Two typos then the correct password (still under MaxFailures): succeeds.
+	do("typo1")
+	do("typo2")
+	if got := do("correct-horse"); got != http.StatusOK {
+		t.Fatalf("correct password under limit: want 200, got %d", got)
+	}
+	// History cleared: it now takes a full fresh budget to lock again.
+	for i := 0; i < 2; i++ {
+		do("wrong")
+	}
+	if got := do("correct-horse"); got != http.StatusOK {
+		t.Fatalf("after reset, correct password should still work: want 200, got %d", got)
 	}
 }
 
