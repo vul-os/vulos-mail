@@ -103,6 +103,13 @@
 
   <!-- Reading pane -->
   <section class="read-pane" id="read-pane">
+    <!-- Mobile-only back bar (shown <560px when reading) -->
+    <header class="read-mobilebar" id="read-mobilebar">
+      <button class="iconbtn" id="read-back" title="Back to list" aria-label="Back to list">
+        <svg viewBox="0 0 24 24" class="ic"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
+      </button>
+      <span class="read-mobilebar-title">Conversation</span>
+    </header>
     <div class="read-empty" id="read-empty">
       <span class="logo logo-xl" aria-hidden="true"></span>
       <p>Select a conversation</p>
@@ -110,6 +117,30 @@
     </div>
     <article class="read" id="read" hidden></article>
   </section>
+
+  <!-- Mobile-only bottom navigation (shown <560px) -->
+  <nav class="mobilenav" id="mobilenav" aria-label="Primary">
+    <button class="mobilenav-item on" data-mnav="inbox" title="Inbox">
+      <svg viewBox="0 0 24 24" class="ic"><path d="M3 12h5l2 3h4l2-3h5"/><path d="M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/></svg>
+      <span>Inbox</span>
+    </button>
+    <button class="mobilenav-item" data-mnav="search" title="Search">
+      <svg viewBox="0 0 24 24" class="ic"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <span>Search</span>
+    </button>
+    <button class="mobilenav-item mobilenav-compose" data-mnav="compose" title="Compose">
+      <svg viewBox="0 0 24 24" class="ic"><path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M13.5 6.5l3 3"/></svg>
+      <span>Compose</span>
+    </button>
+    <button class="mobilenav-item" data-mnav="labels" title="Folders">
+      <svg viewBox="0 0 24 24" class="ic"><path d="M3 7h7l2 2h9v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+      <span>Folders</span>
+    </button>
+    <button class="mobilenav-item" data-mnav="more" title="More">
+      <svg viewBox="0 0 24 24" class="ic"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+      <span>More</span>
+    </button>
+  </nav>
 </main>
 
 <!-- Compose (template cloned into a dock) -->
@@ -160,6 +191,13 @@
 <div class="overlay" id="settings" hidden>
   <div class="settings-card">
     <h2>Settings</h2>
+    <div class="set-theme">
+      <span>Appearance</span>
+      <div class="seg" id="set-theme">
+        <button type="button" data-theme="dark" class="on">Dark</button>
+        <button type="button" data-theme="light">Light</button>
+      </div>
+    </div>
     <label class="field"><span>Signature</span><textarea id="set-sig" rows="3" placeholder="-- &#10;Alice · Vulos Mail"></textarea></label>
     <div class="set-section">
       <label class="switch"><input type="checkbox" id="set-vac" /> <span>Vacation responder</span></label>
@@ -236,6 +274,26 @@
   <div class="cmdk-box">
     <input class="cmdk-in" id="cmdk-in" placeholder="Type a command or jump to a label…" spellcheck="false" />
     <div class="cmdk-list" id="cmdk-list"></div>
+  </div>
+</div>
+
+<!-- Mobile "More" sheet -->
+<div class="sheet" id="moresheet" hidden>
+  <div class="sheet-panel" role="dialog" aria-label="More">
+    <div class="sheet-grab" aria-hidden="true"></div>
+    <button class="sheet-item" data-more="calendar">
+      <svg viewBox="0 0 24 24" class="ic"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg> Calendar
+    </button>
+    <button class="sheet-item" data-more="contacts">
+      <svg viewBox="0 0 24 24" class="ic"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg> Contacts
+    </button>
+    <button class="sheet-item" data-more="settings">
+      <svg viewBox="0 0 24 24" class="ic"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9 2 2 0 1 1-2.8 2.8 1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2 2 2 0 1 1-2.8-2.8 1.7 1.7 0 0 0 .3-2.9 2 2 0 1 1 0-4 1.7 1.7 0 0 0-.3-2.9 2 2 0 1 1 2.8-2.8 1.7 1.7 0 0 0 2.9.3 1.7 1.7 0 0 0 1-1.5 2 2 0 1 1 4 0 1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3 2 2 0 1 1 2.8 2.8 1.7 1.7 0 0 0 1.5 4z"/></svg> Settings
+    </button>
+    <button class="sheet-item" data-more="logout">
+      <svg viewBox="0 0 24 24" class="ic"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg> Sign out
+    </button>
+    <button class="btn btn-ghost btn-block" data-more="close">Close</button>
   </div>
 </div>
 

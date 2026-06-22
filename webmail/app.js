@@ -16,6 +16,46 @@
     settings: { signature: "", vacation: { enabled: false } },
   };
 
+  // ── theme (light/dark via the token system) ───────────────────────
+  function applyTheme(t) {
+    const theme = t === "light" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", theme);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", theme === "light" ? "#fbfbfa" : "#0c0c0c");
+    $$("#set-theme button").forEach((b) => b.classList.toggle("on", b.dataset.theme === theme));
+  }
+  function loadTheme() { try { return localStorage.getItem("vulos-mail.theme") || "dark"; } catch { return "dark"; } }
+  function setTheme(t) { try { localStorage.setItem("vulos-mail.theme", t); } catch {} applyTheme(t); }
+  applyTheme(loadTheme());
+
+  // ── focus trap + restore for overlays (a11y) ──────────────────────
+  // Keeps Tab within an open dialog and returns focus to the trigger on close.
+  const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[contenteditable="true"],[tabindex]:not([tabindex="-1"])';
+  let trapStack = []; // [{root, prev, handler}]
+  function focusables(root) { return $$(FOCUSABLE, root).filter((e) => e.offsetParent !== null || e === document.activeElement); }
+  function trapFocus(root, initial) {
+    const prev = document.activeElement;
+    const handler = (e) => {
+      if (e.key !== "Tab") return;
+      const f = focusables(root);
+      if (!f.length) { e.preventDefault(); return; }
+      const first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
+    root.addEventListener("keydown", handler);
+    trapStack.push({ root, prev, handler });
+    const target = initial || focusables(root)[0];
+    if (target) setTimeout(() => target.focus(), 0);
+  }
+  function releaseFocus(root) {
+    const i = trapStack.findIndex((t) => t.root === root);
+    if (i < 0) return;
+    const t = trapStack.splice(i, 1)[0];
+    t.root.removeEventListener("keydown", t.handler);
+    if (t.prev && t.prev.focus && document.contains(t.prev)) setTimeout(() => t.prev.focus(), 0);
+  }
+
   const SYS_ICONS = {
     inbox: '<path d="M3 12h5l2 3h4l2-3h5"/><path d="M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/>',
     sent: '<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/>',
@@ -107,6 +147,11 @@
     jmap.getSettings().then((s) => { if (s) S.settings = s; }).catch(() => {});
     loadLabels().then(() => selectLabel("inbox", "Inbox"));
     startPush();
+    // Offer to resume an unsent draft from a previous session.
+    const d = readDraft();
+    if (d && (d.to || d.subject || (d.html && d.html.replace(/<[^>]*>/g, "").trim()))) {
+      setTimeout(() => toast("Unsent draft restored", () => openCompose({ draft: d })), 600);
+    }
   }
 
   // ── live updates (SSE) ────────────────────────────────────────────
@@ -136,13 +181,16 @@
     $("#set-vac-subj").value = v.subject || "";
     $("#set-vac-body").value = v.body || "";
     $("#set-vac-fields").classList.toggle("on", !!v.enabled);
+    applyTheme(loadTheme());
     $("#settings").hidden = false;
+    trapFocus($("#settings"), $("#set-sig"));
   }
-  function closeSettings() { $("#settings").hidden = true; }
+  function closeSettings() { releaseFocus($("#settings")); $("#settings").hidden = true; }
   $("#settings-btn").addEventListener("click", openSettings);
   $("#set-cancel").addEventListener("click", closeSettings);
   $("#settings").addEventListener("click", (e) => { if (e.target.id === "settings") closeSettings(); });
   $("#set-vac").addEventListener("change", (e) => $("#set-vac-fields").classList.toggle("on", e.target.checked));
+  $$("#set-theme button").forEach((b) => b.addEventListener("click", () => setTheme(b.dataset.theme)));
   $("#set-save").addEventListener("click", async () => {
     const s = {
       signature: $("#set-sig").value,
@@ -182,9 +230,10 @@
     S.selected.clear(); renderSelbar();
     $("#search").value = "";
     $("#list-title").textContent = name;
-    $("#app").classList.remove("reading");
+    $("#app").classList.remove("reading", "browsing");
     showRead(false);
     renderLabels();
+    syncMobileTab(id);
     await loadList();
   }
 
@@ -256,11 +305,12 @@
   let contactsCache = [];
   async function openContacts() {
     $("#contacts").hidden = false;
+    trapFocus($("#contacts"), $("#contact-name"));
     $("#contacts-list").innerHTML = '<div class="contacts-empty">Loading…</div>';
     try { contactsCache = await jmap.contacts(); } catch { contactsCache = []; }
     renderContacts("");
-    $("#contact-name").focus();
   }
+  function closeContacts() { releaseFocus($("#contacts")); $("#contacts").hidden = true; }
   function renderContacts(f) {
     const ff = (f || "").toLowerCase();
     const list = contactsCache.filter((c) => !ff || (c.name + " " + c.email).toLowerCase().includes(ff))
@@ -277,14 +327,14 @@
            <button class="iconbtn" data-mail title="Compose"><svg viewBox="0 0 24 24" class="ic"><path d="M4 4h16v16H4z"/><path d="m22 6-10 7L2 6"/></svg></button>
            <button class="iconbtn" data-del title="Delete"><svg viewBox="0 0 24 24" class="ic"><path d="M3 6h18"/><path d="M8 6V4h8v2m1 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button>
          </div>`);
-      row.querySelector("[data-mail]").onclick = () => { $("#contacts").hidden = true; openCompose({ to: c.email }); };
+      row.querySelector("[data-mail]").onclick = () => { closeContacts(); openCompose({ to: c.email }); };
       row.querySelector("[data-del]").onclick = async () => { await jmap.delContact(c.id); contactsCache = contactsCache.filter((x) => x.id !== c.id); renderContacts($("#contact-search").value); toast("Contact deleted"); };
       box.appendChild(row);
     }
   }
   $("#contacts-btn").addEventListener("click", openContacts);
-  $("#contacts-close").addEventListener("click", () => ($("#contacts").hidden = true));
-  $("#contacts").addEventListener("click", (e) => { if (e.target.id === "contacts") $("#contacts").hidden = true; });
+  $("#contacts-close").addEventListener("click", closeContacts);
+  $("#contacts").addEventListener("click", (e) => { if (e.target.id === "contacts") closeContacts(); });
   $("#contact-search").addEventListener("input", (e) => renderContacts(e.target.value));
   $("#contact-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -309,10 +359,12 @@
 
   async function openCalendar() {
     $("#calendar").hidden = false;
+    trapFocus($("#calendar"), $("#cal-new"));
     calMonth = new Date();
     try { eventsCache = await jmap.events(); } catch { eventsCache = []; }
     renderCalendar();
   }
+  function closeCalendar() { releaseFocus($("#calendar")); $("#calendar").hidden = true; }
   function setView(v) {
     calView = v;
     $$("#cal-view button").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
@@ -417,8 +469,8 @@
   function closeEventPop() { $("#cal-pop").hidden = true; editingEvent = null; }
 
   $("#calendar-btn").addEventListener("click", openCalendar);
-  $("#calendar-close").addEventListener("click", () => ($("#calendar").hidden = true));
-  $("#calendar").addEventListener("click", (e) => { if (e.target.id === "calendar") $("#calendar").hidden = true; });
+  $("#calendar-close").addEventListener("click", closeCalendar);
+  $("#calendar").addEventListener("click", (e) => { if (e.target.id === "calendar") closeCalendar(); });
   $("#cal-prev").addEventListener("click", () => { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1); renderCalendar(); });
   $("#cal-next").addEventListener("click", () => { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1); renderCalendar(); });
   $("#cal-today").addEventListener("click", () => { calMonth = new Date(); renderCalendar(); });
@@ -526,6 +578,7 @@
 
   function renderRead(row) {
     const m = row.msg;
+    const mt = $(".read-mobilebar-title"); if (mt) mt.textContent = m.subject || "(no subject)";
     const starred = kw(m, "$flagged");
     const body = bodyText(m);
     const labels = (Object.keys(m.mailboxIds || {})).map((id) => labelName(id));
@@ -583,6 +636,56 @@
   function showRead(on) { $("#read").hidden = !on; $("#read-empty").hidden = on; }
   function backToList() { S.openId = null; $("#app").classList.remove("reading"); showRead(false); renderList(); $("#msglist").focus(); }
 
+  // ── mobile navigation (single-pane <560px) ────────────────────────
+  $("#read-back").addEventListener("click", backToList);
+  function setMobileTab(tab) { $$(".mobilenav-item").forEach((b) => b.classList.toggle("on", b.dataset.mnav === tab)); }
+  function syncMobileTab(id) { const m = S.labels.find((l) => l.id === id); setMobileTab((m && m.role === "inbox") || id === "inbox" ? "inbox" : "labels"); }
+  function closeMoreSheet() { releaseFocus($("#moresheet")); $("#moresheet").hidden = true; }
+  function openMoreSheet() {
+    // Build the folders/labels list dynamically each open so counts stay fresh.
+    $("#moresheet").hidden = false;
+    trapFocus($("#moresheet"));
+  }
+  $$(".mobilenav-item").forEach((b) => b.addEventListener("click", () => {
+    const t = b.dataset.mnav;
+    if (t === "compose") { openCompose(); return; }
+    if (t === "search") { $("#app").classList.remove("reading", "browsing"); $("#search").focus(); setMobileTab("search"); return; }
+    if (t === "more") { openMoreSheet(); return; }
+    if (t === "labels") { openFoldersSheet(); return; }
+    if (t === "inbox") { selectLabel("inbox", "Inbox"); setMobileTab("inbox"); }
+  }));
+  // Folders sheet: a quick label switcher for phones (the sidebar is hidden).
+  function openFoldersSheet() {
+    const sheet = $("#moresheet"), panel = sheet.querySelector(".sheet-panel");
+    panel.innerHTML = '<div class="sheet-grab" aria-hidden="true"></div>';
+    for (const m of S.labels) {
+      const key = m.role || m.id;
+      const b = el("button", "sheet-item",
+        `<svg viewBox="0 0 24 24" class="ic">${SYS_ICONS[key] || SYS_ICONS._}</svg> ${esc(m.name)}` +
+        (m.unreadEmails > 0 ? ` <span class="label-count" style="margin-left:auto">${m.unreadEmails}</span>` : ""));
+      b.onclick = () => { closeFoldersSheet(); selectLabel(m.id, m.name); setMobileTab(m.role === "inbox" || key === "inbox" ? "inbox" : "labels"); };
+      panel.appendChild(b);
+    }
+    const close = el("button", "btn btn-ghost btn-block", "Close"); close.onclick = closeFoldersSheet;
+    panel.appendChild(close);
+    sheet.hidden = false; trapFocus(sheet);
+  }
+  function closeFoldersSheet() { releaseFocus($("#moresheet")); $("#moresheet").hidden = true; restoreMoreSheet(); }
+  // Restore the static "More" sheet markup after a dynamic folders render.
+  const MORESHEET_HTML = $("#moresheet") ? $("#moresheet").querySelector(".sheet-panel").innerHTML : "";
+  function restoreMoreSheet() { const p = $("#moresheet").querySelector(".sheet-panel"); if (p) { p.innerHTML = MORESHEET_HTML; wireMoreSheet(); } }
+  function wireMoreSheet() {
+    $$("#moresheet [data-more]").forEach((b) => b.addEventListener("click", () => {
+      const a = b.dataset.more; closeMoreSheet();
+      if (a === "calendar") openCalendar();
+      else if (a === "contacts") openContacts();
+      else if (a === "settings") openSettings();
+      else if (a === "logout") $("#logout").click();
+    }));
+  }
+  wireMoreSheet();
+  $("#moresheet").addEventListener("click", (e) => { if (e.target.id === "moresheet") { closeMoreSheet(); restoreMoreSheet(); } });
+
   // ── actions ───────────────────────────────────────────────────────
   async function markSeen(row, seen) {
     setKw(row.msg, "$seen", seen);
@@ -616,30 +719,122 @@
   }
 
   // ── compose ───────────────────────────────────────────────────────
+  // Draft persistence: a single local draft (keyed per account) survives reloads
+  // and accidental closes. Cleared on send or explicit discard.
+  const DRAFT_KEY = () => "vulos-mail.draft." + (jmap.user || "");
+  function readDraft() { try { return JSON.parse(localStorage.getItem(DRAFT_KEY()) || "null"); } catch { return null; } }
+  function writeDraft(d) { try { localStorage.setItem(DRAFT_KEY(), JSON.stringify(d)); } catch {} }
+  function clearDraft() { try { localStorage.removeItem(DRAFT_KEY()); } catch {} }
+
   $("#compose-btn").addEventListener("click", () => openCompose());
+  let composePrev = null; // focus to restore when the (last) composer closes
   function openCompose(pre = {}) {
+    const restoreDraft = pre.draft;
+    if (!composePrev) composePrev = document.activeElement;
     const node = $("#compose-tpl").content.firstElementChild.cloneNode(true);
     $("#compose-dock").appendChild(node);
     const rich = node.querySelector(".c-rich");
     const atts = []; // {name,type,data(base64),size}
     if (pre.to) node.querySelector(".c-to").value = pre.to;
     if (pre.subject) node.querySelector(".c-subj").value = pre.subject;
-    const sig = S.settings && S.settings.signature ? "\n\n" + S.settings.signature : "";
-    rich.innerText = (pre.text || "") + sig;
+    if (restoreDraft) {
+      node.querySelector(".c-to").value = restoreDraft.to || "";
+      node.querySelector(".c-subj").value = restoreDraft.subject || "";
+      rich.innerHTML = sanitizeHTML(restoreDraft.html || "");
+    } else {
+      const sig = S.settings && S.settings.signature ? "\n\n" + S.settings.signature : "";
+      rich.innerText = (pre.text || "") + sig;
+    }
+
+    // Autosave the draft as the user types (debounced).
+    let draftT, sent = false;
+    function snapshot() {
+      return { to: node.querySelector(".c-to").value, subject: node.querySelector(".c-subj").value, html: rich.innerHTML, at: Date.now() };
+    }
+    function scheduleDraft() {
+      clearTimeout(draftT);
+      draftT = setTimeout(() => { if (!sent) { writeDraft(snapshot()); setStatus("Draft saved"); } }, 800);
+    }
+    function setStatus(t) { const s = node.querySelector(".c-status"); s.textContent = t; if (t === "Draft saved") setTimeout(() => { if (s.textContent === "Draft saved") s.textContent = ""; }, 1500); }
+    node.querySelector(".c-to").addEventListener("input", scheduleDraft);
+    node.querySelector(".c-subj").addEventListener("input", scheduleDraft);
+    rich.addEventListener("input", scheduleDraft);
+
+    const closeComposer = (discard) => {
+      clearTimeout(draftT);
+      if (discard) clearDraft();
+      else if (!sent && (rich.innerText.trim() || node.querySelector(".c-to").value.trim() || node.querySelector(".c-subj").value.trim())) writeDraft(snapshot());
+      node.remove();
+      if (!$(".compose")) { // last composer closed → restore focus
+        if (composePrev && composePrev.focus && document.contains(composePrev)) { try { composePrev.focus(); } catch {} }
+        composePrev = null;
+      }
+    };
 
     const head = node.querySelector(".compose-head");
     head.onclick = (e) => { if (e.target.closest(".close,.min")) return; node.classList.toggle("min"); };
-    node.querySelector(".close").onclick = () => node.remove();
+    node.querySelector(".close").onclick = () => closeComposer(true);
     node.querySelector(".min").onclick = () => node.classList.toggle("min");
+    // Esc within the composer closes it (keeping the draft) and restores focus.
+    node.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); closeComposer(false); } });
 
-    // formatting toolbar
+    // formatting toolbar (execCommand is deprecated but the only cross-browser
+    // way to do contenteditable rich text without a framework; calls are inert
+    // formatting verbs only — no HTML strings pass through them).
     node.querySelectorAll(".ctool[data-fmt]").forEach((b) => b.addEventListener("mousedown", (e) => {
-      e.preventDefault(); rich.focus(); document.execCommand(b.dataset.fmt, false, null);
+      e.preventDefault(); rich.focus(); document.execCommand(b.dataset.fmt, false, null); scheduleDraft();
     }));
+
+    // Inline link editor — replaces the old prompt(). Remembers the selection so
+    // the link wraps the text the user had highlighted.
+    let savedRange = null;
     node.querySelector("[data-link]").addEventListener("mousedown", (e) => {
-      e.preventDefault(); rich.focus();
-      const url = prompt("Link URL:", "https://");
-      if (url) document.execCommand("createLink", false, url);
+      e.preventDefault();
+      const sel = window.getSelection();
+      savedRange = (sel && sel.rangeCount && rich.contains(sel.anchorNode)) ? sel.getRangeAt(0).cloneRange() : null;
+      openLinkBar();
+    });
+    function openLinkBar() {
+      let bar = node.querySelector(".c-linkbar");
+      if (bar) { bar.querySelector("input").focus(); return; }
+      bar = el("div", "c-linkbar",
+        `<input type="url" placeholder="https://… or mailto:…" aria-label="Link URL" />` +
+        `<button class="btn btn-primary" type="button" data-apply>Add link</button>` +
+        `<button class="btn btn-ghost" type="button" data-cancel>Cancel</button>`);
+      node.querySelector(".compose-foot").after(bar);
+      const inp = bar.querySelector("input");
+      const close = () => bar.remove();
+      const apply = () => {
+        let url = inp.value.trim();
+        if (!url) return close();
+        if (!/^(https?:|mailto:)/i.test(url)) url = "https://" + url;
+        rich.focus();
+        if (savedRange) { const s = window.getSelection(); s.removeAllRanges(); s.addRange(savedRange); }
+        if (window.getSelection().isCollapsed) document.execCommand("insertText", false, url);
+        document.execCommand("createLink", false, url);
+        // Harden the just-created link.
+        $$("a", rich).forEach((a) => { a.target = "_blank"; a.rel = "noopener noreferrer"; });
+        close(); scheduleDraft();
+      };
+      bar.querySelector("[data-apply]").onclick = apply;
+      bar.querySelector("[data-cancel]").onclick = close;
+      inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); apply(); } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } });
+      inp.focus();
+    }
+
+    // Paste hardening: strip dangerous markup from HTML pastes; plain-text pastes
+    // insert as-is. Prevents script/style/onerror payloads entering the document.
+    rich.addEventListener("paste", (e) => {
+      const dt = e.clipboardData; if (!dt) return;
+      e.preventDefault();
+      const html = dt.getData("text/html");
+      if (html) {
+        const clean = sanitizeHTML(html);
+        document.execCommand("insertHTML", false, clean);
+      } else {
+        document.execCommand("insertText", false, dt.getData("text/plain"));
+      }
+      scheduleDraft();
     });
 
     // attachments
@@ -680,24 +875,32 @@
     }
 
     const send = node.querySelector(".c-send");
-    const doSend = async () => {
+    // Send with an undo window: close the composer immediately and hold the
+    // message for ~5s; "Undo" reopens it, otherwise it actually goes out.
+    const doSend = () => {
       const to = node.querySelector(".c-to").value.trim();
       if (!to) { node.querySelector(".c-to").focus(); return; }
-      send.disabled = true; node.querySelector(".c-status").textContent = "Sending…";
-      try {
-        await jmap.send({
-          to: to.split(",").map((s) => s.trim()).filter(Boolean),
-          subject: node.querySelector(".c-subj").value,
-          text: rich.innerText,
-          html: rich.innerHTML.trim() ? rich.innerHTML : "",
-          attachments: atts.map((a) => ({ name: a.name, type: a.type, data: a.data })),
-        });
-        node.remove(); toast("Sent");
-      } catch (ex) { node.querySelector(".c-status").textContent = ex.message; send.disabled = false; }
+      const payload = {
+        to: to.split(",").map((s) => s.trim()).filter(Boolean),
+        subject: node.querySelector(".c-subj").value,
+        text: rich.innerText,
+        html: rich.innerHTML.trim() ? rich.innerHTML : "",
+        attachments: atts.map((a) => ({ name: a.name, type: a.type, data: a.data })),
+      };
+      const reopenPre = { draft: { to: node.querySelector(".c-to").value, subject: node.querySelector(".c-subj").value, html: rich.innerHTML } };
+      sent = true; clearTimeout(draftT); clearDraft();
+      closeComposer(true);
+      let cancelled = false;
+      const timer = setTimeout(async () => {
+        if (cancelled) return;
+        try { await jmap.send(payload); toast("Sent"); }
+        catch (ex) { toast("Send failed: " + ex.message); openCompose(reopenPre); }
+      }, 5000);
+      toast("Sending…", () => { cancelled = true; clearTimeout(timer); openCompose(reopenPre); });
     };
     send.onclick = doSend;
     rich.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") doSend(); });
-    (pre.to ? rich : node.querySelector(".c-to")).focus();
+    (pre.to || restoreDraft ? rich : node.querySelector(".c-to")).focus();
     return node;
   }
   function replyTo(row) {
@@ -730,7 +933,17 @@
     if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); openCmdk(); return; }
     if (!$("#cmdk").hidden) { cmdkKey(e); return; }
     const typing = /^(input|textarea)$/i.test(e.target.tagName) || e.target.isContentEditable;
-    if (typing) { if (e.key === "Escape") e.target.blur(); return; }
+    if (typing) {
+      // Esc inside an open dialog field closes that dialog (focus trap keeps us
+      // here, so blur alone wouldn't escape it). Composer handles its own Esc.
+      if (e.key === "Escape" && !e.target.closest(".compose")) {
+        if (!$("#contacts").hidden) { e.preventDefault(); closeContacts(); return; }
+        if (!$("#settings").hidden) { e.preventDefault(); closeSettings(); return; }
+        if (!$("#calendar").hidden) { if (!$("#cal-pop").hidden) { $("#cal-pop").hidden = true; } else closeCalendar(); e.preventDefault(); return; }
+        e.target.blur();
+      } else if (e.key === "Escape") e.target.blur();
+      return;
+    }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === "x") { if (S.sel < 0) { S.sel = 0; highlightRow(); } const r = visibleRows()[S.sel]; if (r) { toggleSel(r); move(1); } return; }
     const rows = visibleRows();
@@ -749,10 +962,14 @@
       case "r": if (rows[S.sel]) replyTo(rows[S.sel]); break;
       case "?": toggleShortcuts(true); break;
       case "Escape": {
+        if (!$("#moresheet").hidden) { closeMoreSheet(); restoreMoreSheet(); break; }
         const dyn = document.querySelector("#calendar .cal-pop:not(#cal-pop)");
         if (dyn) { dyn.remove(); break; }                       // day-detail popover first
         if (!$("#cal-pop").hidden) { $("#cal-pop").hidden = true; break; }
-        $("#contacts").hidden = true; $("#settings").hidden = true; $("#calendar").hidden = true; toggleShortcuts(false); break;
+        if (!$("#contacts").hidden) { closeContacts(); break; }
+        if (!$("#settings").hidden) { closeSettings(); break; }
+        if (!$("#calendar").hidden) { closeCalendar(); break; }
+        toggleShortcuts(false); break;
       }
     }
   });
@@ -778,7 +995,8 @@
     if (on && o.hidden) {
       $("#sc-grid").innerHTML = SHORTCUTS.map(([k, d]) => `<div class="sc"><span>${d}</span><kbd>${k}</kbd></div>`).join("");
       o.hidden = false;
-    } else if (!on) o.hidden = true;
+      trapFocus(o, $("#sc-close"));
+    } else if (!on && !o.hidden) { releaseFocus(o); o.hidden = true; }
   }
   $("#sc-close").onclick = () => toggleShortcuts(false);
   $("#shortcuts").onclick = (e) => { if (e.target.id === "shortcuts") toggleShortcuts(false); };
@@ -800,8 +1018,9 @@
     for (const m of S.labels) c.push({ label: "Go to " + m.name, ic: SYS_ICONS[m.role || m.id] || SYS_ICONS._, run: () => selectLabel(m.id, m.name) });
     return c;
   }
-  function openCmdk() { const o = $("#cmdk"); o.hidden = false; const inp = $("#cmdk-in"); inp.value = ""; cmdkIdx = 0; renderCmdk(""); inp.focus(); }
-  function closeCmdk() { $("#cmdk").hidden = true; }
+  let cmdkPrev = null;
+  function openCmdk() { cmdkPrev = document.activeElement; const o = $("#cmdk"); o.hidden = false; const inp = $("#cmdk-in"); inp.value = ""; cmdkIdx = 0; renderCmdk(""); inp.focus(); }
+  function closeCmdk() { $("#cmdk").hidden = true; if (cmdkPrev && cmdkPrev.focus && document.contains(cmdkPrev)) { try { cmdkPrev.focus(); } catch {} } cmdkPrev = null; }
   function renderCmdk(f) {
     const all = commands(); const ff = f.trim().toLowerCase();
     cmdkCmds = ff ? all.filter((c) => c.label.toLowerCase().includes(ff)) : all;
@@ -855,6 +1074,40 @@
     return `linear-gradient(135deg,rgb(${r},${g},${b}),rgb(${(r + 40) % 256},${(g + 30) % 256},${(b + 50) % 256}))`;
   }
   function esc(s) { return (s == null ? "" : String(s)).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+  // Sanitize pasted HTML to a safe subset: drop scripts/styles/event handlers,
+  // keep only inline-formatting + links/lists. Used for paste into the composer.
+  const PASTE_ALLOW = new Set(["B", "STRONG", "I", "EM", "U", "A", "BR", "P", "DIV", "SPAN", "UL", "OL", "LI", "BLOCKQUOTE", "CODE", "PRE"]);
+  function sanitizeHTML(html) {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    const walk = (node) => {
+      [...node.childNodes].forEach((n) => {
+        if (n.nodeType === 1) {
+          const tag = n.tagName;
+          // Strip dangerous containers entirely (including their text).
+          if (tag === "SCRIPT" || tag === "STYLE" || tag === "IFRAME" || tag === "OBJECT" || tag === "EMBED" || tag === "LINK" || tag === "META") { n.remove(); return; }
+          if (!PASTE_ALLOW.has(tag)) {
+            // Unwrap unknown tags: keep their (sanitized) children as plain content.
+            walk(n);
+            const parent = n.parentNode;
+            while (n.firstChild) parent.insertBefore(n.firstChild, n);
+            n.remove();
+            return;
+          }
+          // Scrub attributes; only safe http(s)/mailto hrefs survive on <a>.
+          [...n.attributes].forEach((a) => {
+            const name = a.name.toLowerCase();
+            if (tag === "A" && name === "href" && /^(https?:|mailto:)/i.test(a.value.trim())) return;
+            n.removeAttribute(a.name);
+          });
+          if (tag === "A") { n.setAttribute("target", "_blank"); n.setAttribute("rel", "noopener noreferrer"); }
+          walk(n);
+        } else if (n.nodeType !== 3) { n.remove(); } // drop comments etc.
+      });
+    };
+    walk(tpl.content);
+    return tpl.innerHTML;
+  }
   function linkify(s) { return s.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'); }
   // Escape, linkify per line, and wrap runs of ">"-quoted lines in a blockquote.
   function fmtBody(body) {
