@@ -209,6 +209,51 @@ func TestInboundAuthResultsForgeryStripped(t *testing.T) {
 	}
 }
 
+// A forged A-R bearing *another* host's authserv-id, plus Received-SPF and a
+// foreign ARC chain, must all be stripped from untrusted inbound mail — they
+// would otherwise mislead downstream filters/clients that don't pin our id and
+// (for ARC) imply a verified chain we never checked.
+func TestInboundForeignAuthTraceStripped(t *testing.T) {
+	var got []byte
+	be := &smtpin.Backend{
+		Deliver:    func(_ context.Context, _ string, raw []byte) error { got = raw; return nil },
+		AuthServID: "mx.vulos.to",
+		Verify:     func([]byte, net.IP, string, string) string { return "dkim=fail" },
+	}
+	ln := listenTCP(t)
+	defer ln.Close()
+	go smtpin.NewServer(be, "", "vulos.to").Serve(ln)
+
+	c, err := gosmtp.Dial(ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	forged := "From: ceo@vulos.to\r\n" +
+		"Authentication-Results: relay.attacker.example; dmarc=pass header.from=ceo@vulos.to\r\n" +
+		"Received-SPF: pass (attacker says so) client-ip=1.2.3.4\r\n" +
+		"ARC-Seal: i=1; a=rsa-sha256; t=1; cv=none; d=attacker.example; s=s1; b=forged\r\n" +
+		"ARC-Message-Signature: i=1; a=rsa-sha256; d=attacker.example; s=s1; b=forged\r\n" +
+		"ARC-Authentication-Results: i=1; relay.attacker.example; dmarc=pass\r\n" +
+		"Subject: hi\r\n\r\nbody\r\n"
+	if err := c.SendMail("attacker@evil.example", []string{"victim@vulos.to"}, strings.NewReader(forged)); err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	for _, bad := range []string{"relay.attacker.example", "Received-SPF:", "ARC-Seal:", "ARC-Message-Signature:", "ARC-Authentication-Results:", "dmarc=pass"} {
+		if strings.Contains(s, bad) {
+			t.Fatalf("forged auth-trace %q survived stripping:\n%s", bad, s)
+		}
+	}
+	// Our own header is still added, and the body is intact.
+	if !strings.Contains(s, "mx.vulos.to; dkim=fail") {
+		t.Errorf("our own Authentication-Results header missing:\n%s", s)
+	}
+	if !strings.Contains(s, "From: ceo@vulos.to") || !strings.HasSuffix(strings.TrimRight(s, "\r\n"), "body") {
+		t.Errorf("non-auth headers/body must be preserved:\n%s", s)
+	}
+}
+
 // With KnownRcpt wired, the MX rejects unknown recipients at RCPT (550 5.1.1)
 // rather than accepting the whole message and failing at DATA.
 func TestMXRejectsUnknownRcptAtRcptTime(t *testing.T) {

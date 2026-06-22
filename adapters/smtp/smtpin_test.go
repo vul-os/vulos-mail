@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	gosmtp "github.com/emersion/go-smtp"
+
 	smtpin "github.com/vul-os/vulos-mail/adapters/smtp"
 )
 
@@ -79,5 +81,45 @@ func TestMXPrependsAuthResults(t *testing.T) {
 	want := "Authentication-Results: mx.vulos.to; dkim=pass header.d=vulos.to\r\n"
 	if !strings.HasPrefix(delivered, want) {
 		t.Fatalf("delivered message should start with A-R header; got:\n%q", delivered)
+	}
+}
+
+// A DMARC p=reject failure is refused with SMTP 550 and never delivered, while
+// a fail under p=quarantine/none is still delivered (annotate-only).
+func TestMXEnforcesDMARCReject(t *testing.T) {
+	delivered := 0
+	be := &smtpin.Backend{
+		Deliver: func(context.Context, string, []byte) error { delivered++; return nil },
+		VerifyVerdict: func([]byte, net.IP, string, string) smtpin.AuthVerdict {
+			return smtpin.AuthVerdict{AuthResults: "dmarc=fail header.from=evil.example", Reject: true}
+		},
+		AuthServID: "mx.vulos.to",
+	}
+	sess, _ := be.NewSession(nil)
+	_ = sess.Mail("a@evil.example", nil)
+	_ = sess.Rcpt("c@vulos.to", nil)
+	err := sess.Data(strings.NewReader("From: a@evil.example\r\nSubject: x\r\n\r\nbody\r\n"))
+	if err == nil {
+		t.Fatal("DMARC p=reject failure must be rejected, not delivered")
+	}
+	if se, ok := err.(*gosmtp.SMTPError); !ok || se.Code != 550 {
+		t.Fatalf("want SMTP 550, got %v", err)
+	}
+	if delivered != 0 {
+		t.Fatalf("rejected message must not be delivered (delivered=%d)", delivered)
+	}
+
+	// Same fail but Reject=false (quarantine/none) → delivered with the A-R line.
+	be.VerifyVerdict = func([]byte, net.IP, string, string) smtpin.AuthVerdict {
+		return smtpin.AuthVerdict{AuthResults: "dmarc=fail header.from=evil.example", Reject: false}
+	}
+	sess2, _ := be.NewSession(nil)
+	_ = sess2.Mail("a@evil.example", nil)
+	_ = sess2.Rcpt("c@vulos.to", nil)
+	if err := sess2.Data(strings.NewReader("From: a@evil.example\r\nSubject: x\r\n\r\nbody\r\n")); err != nil {
+		t.Fatalf("quarantine/none fail should still deliver: %v", err)
+	}
+	if delivered != 1 {
+		t.Fatalf("annotate-only fail should be delivered once, got %d", delivered)
 	}
 }

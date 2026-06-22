@@ -15,10 +15,20 @@ import (
 	gosmtp "github.com/emersion/go-smtp"
 )
 
-// stripAuthResults removes any existing Authentication-Results header field whose
-// authserv-id matches servID (RFC 8601 §5), so untrusted inbound mail can't carry
-// a forged "dmarc=pass" line attributed to us. Folded continuation lines are
-// dropped with their field.
+// stripAuthResults removes pre-existing authentication-trace header fields from
+// untrusted inbound mail so an attacker can't smuggle forged results past our
+// own evaluation and downstream filters/clients (RFC 8601 §5). It drops:
+//
+//   - ALL Authentication-Results fields (not just our own authserv-id — a forged
+//     "dmarc=pass" attributed to *another* host is just as misleading to a
+//     human/filter that doesn't pin the authserv-id);
+//   - Received-SPF (we re-derive SPF ourselves);
+//   - ARC-Seal / ARC-Message-Signature / ARC-Authentication-Results (we don't
+//     verify ARC, so a foreign chain must not be trusted or forwarded as ours).
+//
+// The servID parameter is retained for API stability but no longer narrows the
+// Authentication-Results match. Folded continuation lines are dropped with their
+// field.
 func stripAuthResults(raw []byte, servID string) []byte {
 	i := bytes.Index(raw, []byte("\r\n\r\n"))
 	if i < 0 {
@@ -44,7 +54,7 @@ func stripAuthResults(raw []byte, servID string) []byte {
 	}
 	kept := fields[:0]
 	for _, f := range fields {
-		if isAuthResultsFor(f, servID) {
+		if isUntrustedAuthTrace(f) {
 			continue
 		}
 		kept = append(kept, f)
@@ -52,21 +62,39 @@ func stripAuthResults(raw []byte, servID string) []byte {
 	return append([]byte(strings.Join(kept, "\r\n")), rest...)
 }
 
-func isAuthResultsFor(field, servID string) bool {
-	if !strings.HasPrefix(strings.ToLower(field), "authentication-results:") {
-		return false
+// strippedAuthPrefixes are header field-name prefixes whose pre-existing values
+// from untrusted inbound mail are discarded (case-insensitive).
+var strippedAuthPrefixes = []string{
+	"authentication-results:",
+	"received-spf:",
+	"arc-seal:",
+	"arc-message-signature:",
+	"arc-authentication-results:",
+}
+
+func isUntrustedAuthTrace(field string) bool {
+	lf := strings.ToLower(field)
+	for _, p := range strippedAuthPrefixes {
+		if strings.HasPrefix(lf, p) {
+			return true
+		}
 	}
-	v := strings.TrimSpace(field[len("authentication-results:"):])
-	id := v
-	if j := strings.IndexAny(v, "; \t\r\n"); j >= 0 {
-		id = v[:j]
-	}
-	return strings.EqualFold(strings.TrimSpace(id), servID)
+	return false
 }
 
 // DeliverFunc routes one accepted message to one recipient. Returning an error
 // causes the SMTP transaction to fail (the sending MX will retry).
 type DeliverFunc func(ctx context.Context, rcpt string, raw []byte) error
+
+// AuthVerdict is the outcome of inbound authentication for one message.
+type AuthVerdict struct {
+	// AuthResults is the Authentication-Results header value to prepend.
+	AuthResults string
+	// Reject is true when delivery must be refused with SMTP 550 — set only when
+	// DMARC fails AND the sender domain's published policy is p=reject. A
+	// quarantine/none policy never sets this (annotate-only).
+	Reject bool
+}
 
 // Backend implements gosmtp.Backend.
 type Backend struct {
@@ -75,6 +103,10 @@ type Backend struct {
 	// connecting IP, HELO name, and MAIL FROM, returning an Authentication-Results
 	// header value that is prepended before delivery.
 	Verify func(raw []byte, ip net.IP, helo, mailFrom string) string
+	// VerifyVerdict, if set, takes precedence over Verify: it returns the A-R
+	// header value AND a DMARC reject decision, so a p=reject failure can be
+	// refused at SMTP time (550) rather than delivered with a failing A-R line.
+	VerifyVerdict func(raw []byte, ip net.IP, helo, mailFrom string) AuthVerdict
 	// AuthServID is the authserv-id placed in the Authentication-Results header
 	// (typically this host's name).
 	AuthServID string
@@ -141,15 +173,27 @@ func (s *session) Data(r io.Reader) error {
 	// Inbound authentication (DKIM): record results as a top header so downstream
 	// (filters, clients) can see them. Prepending a header at the start of the
 	// message is RFC-valid.
-	if s.backend != nil && s.backend.Verify != nil {
+	if s.backend != nil && (s.backend.Verify != nil || s.backend.VerifyVerdict != nil) {
 		servID := s.backend.AuthServID
 		if servID == "" {
 			servID = "vulos-mail"
 		}
-		// RFC 8601 §5: strip any pre-existing Authentication-Results header bearing
-		// our authserv-id, so an attacker can't embed a forged "dmarc=pass" line.
+		// Strip any pre-existing Authentication-Results / Received-SPF / ARC-* from
+		// untrusted inbound mail so an attacker can't smuggle a forged "dmarc=pass"
+		// (or other auth) line past downstream filters.
 		raw = stripAuthResults(raw, servID)
-		if ar := s.backend.Verify(raw, s.remoteIP(), s.helo(), s.from); ar != "" {
+		var ar string
+		if s.backend.VerifyVerdict != nil {
+			v := s.backend.VerifyVerdict(raw, s.remoteIP(), s.helo(), s.from)
+			ar = v.AuthResults
+			if v.Reject {
+				// DMARC failed and the domain publishes p=reject: refuse delivery.
+				return &gosmtp.SMTPError{Code: 550, EnhancedCode: gosmtp.EnhancedCode{5, 7, 1}, Message: "message rejected by DMARC policy (p=reject)"}
+			}
+		} else {
+			ar = s.backend.Verify(raw, s.remoteIP(), s.helo(), s.from)
+		}
+		if ar != "" {
 			hdr := []byte("Authentication-Results: " + servID + "; " + ar + "\r\n")
 			raw = append(hdr, raw...)
 		}
