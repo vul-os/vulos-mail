@@ -116,6 +116,23 @@ func TestJMAPSessionAndEmailFlow(t *testing.T) {
 		t.Fatalf("query returned %d ids, want 2", len(qids))
 	}
 
+	// Pagination window: limit + position slice the result but report the full
+	// total (RFC 8620 §5.5), enabling the webmail's infinite scroll.
+	p0 := apiCall(t, srv, "Email/query", map[string]any{"accountId": "alice", "filter": map[string]any{"inMailbox": string(model.LabelInbox)}, "limit": 1, "position": 0})
+	if got := len(p0["ids"].([]any)); got != 1 {
+		t.Fatalf("paged query (limit 1) returned %d ids, want 1", got)
+	}
+	if p0["total"].(float64) != 2 {
+		t.Fatalf("paged query total = %v, want 2", p0["total"])
+	}
+	p1 := apiCall(t, srv, "Email/query", map[string]any{"accountId": "alice", "filter": map[string]any{"inMailbox": string(model.LabelInbox)}, "limit": 1, "position": 1})
+	if got := len(p1["ids"].([]any)); got != 1 {
+		t.Fatalf("paged query (position 1) returned %d ids, want 1", got)
+	}
+	if p0["ids"].([]any)[0] == p1["ids"].([]any)[0] {
+		t.Fatalf("pages overlap: both returned %v", p0["ids"])
+	}
+
 	// Email/get the first id.
 	g := apiCall(t, srv, "Email/get", map[string]any{"accountId": "alice", "ids": []string{string(idA)}})
 	list := g["list"].([]any)

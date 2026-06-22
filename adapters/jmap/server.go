@@ -276,6 +276,8 @@ func emailQuery(rt *account.Runtime, accountID string, args json.RawMessage) met
 		Filter struct {
 			InMailbox model.LabelID `json:"inMailbox"`
 		} `json:"filter"`
+		Position int  `json:"position"`
+		Limit    *int `json:"limit"`
 	}
 	_ = json.Unmarshal(args, &a)
 
@@ -286,13 +288,29 @@ func emailQuery(rt *account.Runtime, accountID string, args json.RawMessage) met
 		msgs = rt.AllMail()
 	}
 	// Newest first.
-	ids := make([]string, 0, len(msgs))
+	all := make([]string, 0, len(msgs))
 	for i := len(msgs) - 1; i >= 0; i-- {
-		ids = append(ids, string(msgs[i].ID))
+		all = append(all, string(msgs[i].ID))
+	}
+	total := len(all)
+
+	// Apply position + limit windowing (RFC 8620 §5.5). Defaults (position 0,
+	// no limit) return the whole list — preserving prior behavior for clients
+	// that don't paginate.
+	pos := a.Position
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > total {
+		pos = total
+	}
+	ids := all[pos:]
+	if a.Limit != nil && *a.Limit >= 0 && *a.Limit < len(ids) {
+		ids = ids[:*a.Limit]
 	}
 	return methodResult{name: "Email/query", body: map[string]any{
 		"accountId": accountID, "queryState": "0", "canCalculateChanges": false,
-		"position": 0, "total": len(ids), "ids": ids,
+		"position": pos, "total": total, "ids": ids,
 	}}
 }
 

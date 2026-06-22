@@ -67,6 +67,10 @@ export class JMAP {
 
   emails(ids, properties) { return this.one("Email/get", { ids, properties }); }
   set(updates) { return this.one("Email/set", { update: updates }); }
+  // TODO(threading): the server does not yet implement Thread/get or honor
+  // collapseThreads on Email/query. Once it does, the message list can collapse
+  // conversations (pass collapseThreads:true to query()) and the read view can
+  // fetch a whole thread here. Until then this returns unknownMethod.
   threads(ids) { return this.one("Thread/get", { ids }); }
 
   async pushToken() {
