@@ -35,9 +35,14 @@ type Gate struct {
 
 // New returns a Gate signing challenges with secret. maxNumber bounds the search
 // space (higher = more client work); 0 picks a sensible default.
+//
+// The default is sized so the expected proof-of-work (~maxNumber/2 SHA-256
+// pre-image attempts) costs a signup bot real CPU time. 100_000 is ms-cheap and
+// no deterrent; 2_000_000 lands in the ~hundreds-of-ms range on a browser while
+// staying tolerable for a legitimate one-time signup.
 func New(secret []byte, maxNumber int) *Gate {
 	if maxNumber <= 0 {
-		maxNumber = 100_000
+		maxNumber = 2_000_000
 	}
 	return &Gate{secret: secret, maxNumber: maxNumber, ttl: 10 * time.Minute, now: time.Now, used: map[string]time.Time{}}
 }
