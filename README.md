@@ -6,21 +6,50 @@
 
 ### Sovereign mail. You own it.
 
-A complete, self-hostable, **event-sourced mail server** — SMTP · IMAP · JMAP ·
-CalDAV · CardDAV — with a modern **React webmail** client, in a single static Go
-binary. No database server, no cloud, no third-party API required.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Language: Go](https://img.shields.io/badge/server-Go-00ADD8.svg)
+![UI: React](https://img.shields.io/badge/webmail-React-61dafb.svg)
+
+<sub>Part of <strong><a href="https://vulos.org">VulOS</a></strong> — the open, self-hostable web OS &amp; app suite. Runs standalone, or combined under one login by <a href="https://vulos.org">Vulos Workspace</a>.</sub>
+
+<br>
+
+<img src="mail-ui/docs/screenshots/hero.png" alt="Vulos Mail — the three-pane webmail open on a message" width="900">
 
 </div>
 
 ---
 
-## What it is
+## What is Vulos Mail?
 
-Vulos Mail is an independent mail server you can run anywhere. It speaks the
-open protocols mail clients already use, ships a fast keyboard-driven webmail,
-and stores everything in an append-only event log on disk. Cloud integration
-(billing, hosted identity) is **strictly optional** and lives behind a small
-interface seam — the mail core never imports it.
+Vulos Mail is a complete, self-hostable **mail server** — SMTP · IMAP · JMAP ·
+CalDAV · CardDAV — in a single static Go binary, with a modern **React webmail**
+front end. It speaks the open protocols mail clients already use, ships a fast
+keyboard-driven webmail, and stores everything in an append-only event log on
+disk. No database server, no cloud, and no third-party API are required. Cloud
+integration (billing, hosted identity) is **strictly optional** and lives behind
+a small interface seam — the mail core never imports it.
+
+## Part of VulOS
+
+[VulOS](https://vulos.org) is an open, self-hostable web OS + app suite. Each
+product is self-hostable on its own and can be combined under one login by
+**Vulos Workspace**:
+
+- **Vulos Mail** — mail + calendar + contacts (engine: lilmail; UI: `@vulos/mail-ui`; **server: vulos-mail**)
+- **Vulos Talk** — team chat + channels/Spaces + huddles
+- **Vulos Meet** — video meetings (LiveKit SFU)
+- **Vulos Office** — documents: docs, sheets, slides, PDF
+- **Vulos Relay** — sovereign connectivity fabric (`@vulos/relay-client`)
+- **Vulos Workspace** — the open suite shell (one login, app switcher, admin)
+- **Vulos OS** — the web-native desktop
+
+**vulos-mail** is the **sovereign mail server** of the Vulos Mail product. The
+React webmail it serves is the shared [`@vulos/mail-ui`](mail-ui/) library
+(`<MailApp/>` / `<Calendar/>` / `<Contacts/>`); the standalone mail engine is
+[lilmail](https://github.com/vul-os/lilmail). These couple only through clean
+seams (the `/v1` HTTP contract and JMAP) — products never import one another's
+code. vulos-mail runs standalone **and** is combined by Vulos Workspace.
 
 ## Features
 
@@ -36,23 +65,57 @@ interface seam — the mail core never imports it.
 - TLS via bring-your-own certs or built-in **ACME / Let's Encrypt**.
 - Prometheus metrics endpoint.
 
-**Webmail** (`webmail/`, React + Vite + Tailwind)
-- Token-based dark/light design system (teal accent, Vulos-purple brand).
-- Mailbox / label list, message list with infinite scroll, reading pane.
-- Compose / reply / forward with rich-text body, attachments (drag-and-drop),
-  **draft autosave**, and a **5-second send-undo** window.
-- Star · archive · delete · labels · multi-select bulk actions.
-- Client-side **search**, a **⌘K command palette**, and full keyboard shortcuts
-  (`j/k`, `c`, `r`, `e`, `#`, `s`, `g i`, `?`, …).
-- Contacts, a month/agenda **calendar**, and settings (signature, vacation
-  responder, theme).
+**Webmail** (`webmail/` — a thin consumer of [`@vulos/mail-ui`](mail-ui/))
+- Mounts the shared React `<MailApp/>` (folders | list | reading pane), with a
+  responsive three-pane → single-pane phone layout.
+- Compose / reply with rich body and recipient fields; outbound mail is submitted
+  over JMAP.
+- Search, mark read/unread, star, delete; OSS-native dark/light design tokens
+  (mono-led, themeable accent, Vulos-purple brand).
 - Self-serve **signup** that solves the Altcha PoW in-browser and signs you in.
-- Live updates over Server-Sent Events; responsive down to a single-pane phone
-  layout.
-- **XSS-inert email rendering** — message bodies are sanitized to an inert safe
-  subset (scripts / `onerror` / `javascript:` never survive), never injected raw.
+- **XSS-inert email rendering** — HTML bodies are sanitized (DOMPurify) to an
+  inert safe subset; scripts / `onerror` / `javascript:` never survive.
 
-## Architecture
+## Screenshots
+
+The webmail mounts `@vulos/mail-ui`; its gallery is captured against a seeded
+**mock `/v1`** (no live backend). Regenerate with `cd mail-ui && npm run
+screenshots`; see [`mail-ui/docs/SCREENSHOTS.md`](mail-ui/docs/SCREENSHOTS.md).
+
+| Mail | Calendar | Contacts |
+|------|----------|----------|
+| [![Mail](mail-ui/docs/screenshots/mail.png)](mail-ui/docs/screenshots/mail.png) | [![Calendar](mail-ui/docs/screenshots/calendar.png)](mail-ui/docs/screenshots/calendar.png) | [![Contacts](mail-ui/docs/screenshots/contacts.png)](mail-ui/docs/screenshots/contacts.png) |
+
+## Quick start (standalone)
+
+Vulos Mail runs entirely by itself — a domain, a data directory, and (optionally)
+a seed account are the whole dependency list.
+
+```sh
+# 1. build the React webmail → webmail/dist
+cd webmail && npm ci && npm run build && cd ..
+
+# 2. build + run the server (serves webmail/dist at :2080 by default)
+go build -o vulos-mail ./cmd/vulos-mail
+
+VULOS_DOMAIN=example.com \
+VULOS_DATA_DIR=/var/lib/vulos-mail \
+VULOS_ACCOUNT=you@example.com VULOS_PASSWORD=change-me \
+./vulos-mail
+```
+
+Open <http://localhost:2080> and sign in.
+
+### Docker
+
+```sh
+docker build -t vulos-mail .      # multi-stage: builds webmail + Go binary
+docker run -p 2080:2080 -p 2525:2525 -p 2587:2587 -p 2143:2143 \
+  -e VULOS_DOMAIN=example.com -e VULOS_ACCOUNT=you@example.com \
+  -e VULOS_PASSWORD=change-me -v vulos-data:/data vulos-mail
+```
+
+## How it works
 
 ```
               ┌──────────── single Go binary (cmd/vulos-mail) ────────────┐
@@ -73,48 +136,9 @@ interface seam — the mail core never imports it.
   The mail core has zero imports of integration/cloud.
 ```
 
-The webmail is a static SPA that talks to the server's JMAP endpoint and the
-`/api/webmail/*` helpers. It reuses a tiny dependency-free JMAP client
-(`webmail/src/lib/jmap.js`).
-
-## Quickstart (self-host)
-
-Build the webmail and the server:
-
-```sh
-# 1. build the React webmail → webmail/dist
-cd webmail && npm ci && npm run build && cd ..
-
-# 2. build + run the server (serves webmail/dist at :2080 by default)
-go build -o vulos-mail ./cmd/vulos-mail
-
-VULOS_DOMAIN=example.com \
-VULOS_DATA_DIR=/var/lib/vulos-mail \
-VULOS_ACCOUNT=you@example.com VULOS_PASSWORD=change-me \
-./vulos-mail
-```
-
-Open <http://localhost:2080> and sign in. That's the whole dependency list: a
-domain, a data directory, and (optionally) a seed account.
-
-### Docker
-
-```sh
-docker build -t vulos-mail .      # multi-stage: builds webmail + Go binary
-docker run -p 2080:2080 -p 2525:2525 -p 2587:2587 -p 2143:2143 \
-  -e VULOS_DOMAIN=example.com -e VULOS_ACCOUNT=you@example.com \
-  -e VULOS_PASSWORD=change-me -v vulos-data:/data vulos-mail
-```
-
-### Webmail development
-
-```sh
-cd webmail
-npm install
-npm run dev        # Vite dev server with HMR (proxy /jmap + /api to your server)
-npm run build      # production build → webmail/dist
-npm test           # Vitest unit tests (sanitizer / helpers)
-```
+The webmail is a static SPA that mounts the shared `@vulos/mail-ui` components
+and talks to the server's JMAP endpoint and the `/api/webmail/*` helpers via a
+tiny dependency-free JMAP client (`webmail/src/lib/jmap.js`).
 
 ## Configuration
 
@@ -139,26 +163,55 @@ All configuration is via environment variables. Common ones:
 | `VULOS_ALTCHA_SECRET` | random | stable signing key for signup PoW challenges |
 | `VULOS_CP_URL` / `VULOS_CP_SECRET` | — | opt into the vulos-cloud control-plane seam |
 
-See [`SELFHOST.md`](SELFHOST.md) for the full list and the integration-seam
-details.
+See [`SELFHOST.md`](SELFHOST.md) for the full list and the integration-seam details.
 
-## Testing
+## Documentation
+
+| Doc | What |
+|---|---|
+| [`SELFHOST.md`](SELFHOST.md) | Full self-hosting guide + integration-seam details |
+| [`mail-ui/README.md`](mail-ui/README.md) | The shared `@vulos/mail-ui` React component library |
+| [`mail-ui/docs/SCREENSHOTS.md`](mail-ui/docs/SCREENSHOTS.md) | How the webmail screenshots are generated |
+| [`docs/DESIGN.md`](docs/DESIGN.md) | Design system + UX notes |
+| [`docs/BILLING-MODEL.md`](docs/BILLING-MODEL.md) | Optional hosted/billing seam model |
+
+## Development
 
 ```sh
+# Server
+go build ./...                # build everything
 go test ./...                 # Go unit + integration tests
-cd webmail && npm test        # webmail unit tests (Vitest)
-./test/webmail/run.sh         # end-to-end: build webmail, boot server, seed
-                              # mail, drive the SPA in headless Chrome
+
+# Shared mail UI (@vulos/mail-ui)
+cd mail-ui
+npm install
+npm run build                 # demo SPA → dist/
+npm run build:lib             # redistributable library → dist-lib/
+npm test                      # Vitest
+npm run screenshots           # regenerate docs/screenshots (mock /v1)
+
+# Webmail (thin consumer)
+cd webmail
+npm install
+npm run dev                   # Vite dev server with HMR (proxy /jmap + /api)
+npm run build                 # production build → webmail/dist
+
+# End-to-end
+./test/webmail/run.sh         # build webmail, boot server, seed mail, drive SPA
 ```
 
-The end-to-end harness builds the React webmail, points `VULOS_WEBMAIL_DIR` at
+The end-to-end harness builds the webmail, points `VULOS_WEBMAIL_DIR` at
 `webmail/dist`, seeds an inbox (including a hostile XSS-probe message), and
-asserts behavior across every surface — login, signup PoW, list, read,
-XSS-inertness, star, search, command palette, compose, contacts, calendar,
-settings, and bulk actions.
+asserts behavior across login, signup PoW, list, read, XSS-inertness, star,
+search, compose, contacts, calendar, and settings.
+
+## Contributing
+
+Issues and pull requests are welcome. Keep the build, tests, and lint green, and
+preserve the clean product seams (no cross-product imports). See
+[`SELFHOST.md`](SELFHOST.md) and [`mail-ui/README.md`](mail-ui/README.md).
 
 ## License
 
-[MIT](LICENSE) © Imran Paruk and Vulos Contributors. Part of the Vulos suite;
-the mail core is independent and self-hostable with no external service
-dependencies.
+[MIT](LICENSE) © Imran Paruk and Vulos Contributors. Part of VulOS; the mail core
+is independent and self-hostable with no external service dependencies.
