@@ -13,7 +13,7 @@ async function solveAltcha(ch) {
   throw new Error("could not solve challenge");
 }
 
-export default function Login({ jmap, onLogin }) {
+export default function Login({ onLogin }) {
   const [mode, setMode] = useState("login"); // "login" | "signup"
   const [user, setUser] = useState("");
   const [pass, setPass] = useState("");
@@ -34,11 +34,20 @@ export default function Login({ jmap, onLogin }) {
   }, [mode]);
 
   // Perform an actual sign-in with explicit creds (used by both login submit and
-  // the post-signup seamless sign-in).
+  // the post-signup seamless sign-in). Establishes the server-side webmail
+  // session (HttpOnly cookie) that the mail-ui's /v1 calls then ride.
   async function doSignIn(u, p) {
-    jmap.setAuth(u, p);
-    await jmap.session();
-    onLogin(u, p);
+    const r = await fetch("/api/webmail/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ user: u, password: p }),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j.error || (r.status === 401 ? "Invalid credentials" : "Sign-in failed (" + r.status + ")"));
+    }
+    onLogin();
   }
 
   async function submitLogin(e) {

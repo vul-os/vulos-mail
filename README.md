@@ -68,8 +68,8 @@ code. vulos-mail runs standalone **and** is combined by Vulos Workspace.
 **Webmail** (`webmail/` — a thin consumer of [`@vulos/mail-ui`](mail-ui/))
 - Mounts the shared React `<MailApp/>` (folders | list | reading pane), with a
   responsive three-pane → single-pane phone layout.
-- Compose / reply with rich body and recipient fields; outbound mail is submitted
-  over JMAP.
+- Compose / reply with rich body and recipient fields; outbound mail is sent
+  through the lilmail engine (`POST /v1/messages` → SMTP submission).
 - Search, mark read/unread, star, delete; OSS-native dark/light design tokens
   (mono-led, themeable accent, Vulos-purple brand).
 - Self-serve **signup** that solves the Altcha PoW in-browser and signs you in.
@@ -88,8 +88,11 @@ screenshots`; see [`mail-ui/docs/SCREENSHOTS.md`](mail-ui/docs/SCREENSHOTS.md).
 
 ## Quick start (standalone)
 
-Vulos Mail runs entirely by itself — a domain, a data directory, and (optionally)
-a seed account are the whole dependency list.
+The **mail server** (SMTP/IMAP/JMAP/CalDAV/CardDAV) runs entirely by itself — a
+domain, a data directory, and (optionally) a seed account are the whole
+dependency list. The **bundled webmail** additionally needs a lilmail engine to
+serve its `/v1` data (see [How it works](#how-it-works)); point at it with
+`LILMAIL_ENGINE_URL`.
 
 ```sh
 # 1. build the React webmail → webmail/dist
@@ -101,10 +104,13 @@ go build -o vulos-mail ./cmd/vulos-mail
 VULOS_DOMAIN=example.com \
 VULOS_DATA_DIR=/var/lib/vulos-mail \
 VULOS_ACCOUNT=you@example.com VULOS_PASSWORD=change-me \
+LILMAIL_ENGINE_URL=http://localhost:8080 LILMAIL_BROKER_SECRET=shared-secret \
 ./vulos-mail
 ```
 
-Open <http://localhost:2080> and sign in.
+Open <http://localhost:2080> and sign in. (Without `LILMAIL_ENGINE_URL`, sign-in
+still works but the mail surface shows "mail engine not configured"; IMAP/JMAP
+clients are unaffected.)
 
 ### Docker
 
@@ -121,24 +127,43 @@ docker run -p 2080:2080 -p 2525:2525 -p 2587:2587 -p 2143:2143 \
               ┌──────────── single Go binary (cmd/vulos-mail) ────────────┐
   clients ───▶│  SMTP :2525   Submission :2587   IMAP :2143               │
               │  HTTP :2080 ── JMAP /jmap/*  ·  CalDAV  ·  CardDAV         │
-              │              ── /api/webmail/*  (send, attachment,         │
-              │                  calendar, contacts, settings, changes)   │
-              │              ── /api/signup(+/challenge)  (Altcha PoW)     │
-              │              ── /  static React webmail (webmail/dist)     │
-              └──────────────────────────────┬────────────────────────────┘
-                                              │
-              event-sourced core  ── append-only JSONL log / SQLite
-                                  ── blobs: local FS / S3-MinIO
-                                  ── DKIM, accounts.json (bcrypt)
+              │              ── /api/webmail/{login,logout,send}           │
+              │              ── /v1/*  reverse-proxy ─▶ lilmail engine ┐   │
+              │              ── /api/signup(+/challenge)  (Altcha PoW)  │   │
+              │              ── /  static React webmail (webmail/dist)  │   │
+              └─────────────────────────────┬───────────────────────────┘  │
+                                            │                              │
+              event-sourced core  ── append-only JSONL log / SQLite       │
+                                  ── blobs: local FS / S3-MinIO            │
+                                  ── DKIM, accounts.json (bcrypt)          │
+                                            ▲                              │
+                                            │ IMAP/SMTP (brokered creds)   │
+                          lilmail engine ◀──┴──────────────────────────────┘
+                          (LILMAIL_ENGINE_URL) — the mail client engine
 
   optional vulos-cloud seam (internal/seam): identity · entitlements ·
   usage · signup-gate — wired only by cmd/* when VULOS_CP_URL is set.
   The mail core has zero imports of integration/cloud.
 ```
 
-The webmail is a static SPA that mounts the shared `@vulos/mail-ui` components
-and talks to the server's JMAP endpoint and the `/api/webmail/*` helpers via a
-tiny dependency-free JMAP client (`webmail/src/lib/jmap.js`).
+The webmail is a static SPA that mounts the shared `@vulos/mail-ui`
+`<MailApp/>`, which talks **only** to the lilmail `/v1` JSON API for all mail
+data (identity, folders, messages, search, flags, delete, and send). vulos-mail
+is the **server**; lilmail is the **client engine**. The standalone webmail
+deployment is therefore *vulos-mail (server) + a lilmail engine + `@vulos/mail-ui`*:
+
+- The webmail signs in via `POST /api/webmail/login`, which validates the mailbox
+  credentials and mints an **HttpOnly session cookie** (the password is held
+  server-side, never in the browser).
+- vulos-mail reverse-proxies `/v1/*` to the lilmail engine at `LILMAIL_ENGINE_URL`,
+  injecting the signed-in user's credentials as lilmail **broker headers**
+  (`X-Vulos-Mail-*`, gated by the shared `LILMAIL_BROKER_SECRET`). lilmail then
+  connects back to vulos-mail's IMAP/SMTP with those credentials to serve the
+  request — including outbound mail (`POST /v1/messages` → SMTP submission).
+- When `LILMAIL_ENGINE_URL` is **unset**, `/v1` returns a clear
+  `{"error":"mail engine not configured"}` (503) instead of a confusing 404, and
+  the webmail surfaces a "mail engine not configured" state. JMAP, IMAP, CalDAV,
+  CardDAV and the `/api/webmail/send` API still work for non-webmail clients.
 
 ## Configuration
 
@@ -150,6 +175,10 @@ All configuration is via environment variables. Common ones:
 | `VULOS_DATA_DIR` | `./data` | data root (event log, blobs, accounts, DKIM) |
 | `VULOS_ACCOUNT` / `VULOS_PASSWORD` | — | provision one seed account at startup |
 | `VULOS_WEBMAIL_DIR` | `./webmail/dist` | static webmail directory to serve |
+| `LILMAIL_ENGINE_URL` | — | lilmail engine the webmail's `/v1` is proxied to (required for the bundled webmail to read/send mail) |
+| `LILMAIL_BROKER_SECRET` | — | shared secret sent to the engine to authorize brokered per-request credentials (must match lilmail's `LILMAIL_BROKER_SECRET`) |
+| `VULOS_MAIL_IMAP_HOST` / `VULOS_MAIL_IMAP_PORT` | `VULOS_DOMAIN` / `993` | IMAP endpoint advertised to the engine (implicit-TLS) |
+| `VULOS_MAIL_SMTP_HOST` / `VULOS_MAIL_SMTP_PORT` | `VULOS_DOMAIN` / `587` | SMTP submission endpoint advertised to the engine |
 | `VULOS_MX_ADDR` | `:2525` | inbound SMTP listen address |
 | `VULOS_SUBMIT_ADDR` | `:2587` | authenticated submission address |
 | `VULOS_IMAP_ADDR` | `:2143` | IMAP listen address |
@@ -193,7 +222,8 @@ npm run screenshots           # regenerate docs/screenshots (mock /v1)
 # Webmail (thin consumer)
 cd webmail
 npm install
-npm run dev                   # Vite dev server with HMR (proxy /jmap + /api)
+npm run dev                   # Vite dev server with HMR (proxies /v1 + /api + /jmap + /dav
+                              #   to a running vulos-mail; override with VULOS_DEV_BACKEND)
 npm run build                 # production build → webmail/dist
 
 # End-to-end

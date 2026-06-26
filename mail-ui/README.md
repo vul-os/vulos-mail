@@ -117,5 +117,6 @@ npm test           # vitest
 
 `<Compose/>` sends through `POST /v1/messages` by default (via `client.sendMessage`).
 A host may still override `onSend` to route outbound mail through its own
-transport (e.g. `vulos-mail/webmail` submits over JMAP). Attachment upload over
-`/v1` is not yet exposed by lilmail — see its `ROADMAP.md`.
+transport. The bundled `vulos-mail/webmail` uses the default — its `/v1` is
+reverse-proxied to a lilmail engine that submits over SMTP. Attachment upload
+over `/v1` is not yet exposed by lilmail — see its `ROADMAP.md`.

@@ -1,9 +1,12 @@
 # Self-hosting vulos-mail (standalone)
 
-vulos-mail is a **complete, independent mail server**. It runs with **no external
-services and no dependency on any other Vulos project**. Cloud integration (with
-the Vulos control plane) is strictly optional and lives behind a small interface
-seam — the core never imports it.
+vulos-mail is a **complete, independent mail server**. The server — SMTP, IMAP,
+JMAP, CalDAV, CardDAV — runs with **no external services and no dependency on any
+other Vulos project**. Cloud integration (with the Vulos control plane) is
+strictly optional and lives behind a small interface seam — the core never
+imports it. (The one add-on with a dependency is the *bundled React webmail*,
+which needs a lilmail engine — see [The bundled webmail](#the-bundled-webmail-needs-a-lilmail-engine)
+below; the protocol surfaces above never do.)
 
 ## Run it
 
@@ -43,6 +46,44 @@ append-only JSONL. No database server, no cloud, no third-party API.
 | `RSPAMD_URL` | route inbound through rspamd spam scanning |
 | `VULOS_ALTCHA_SECRET` | stable signing key for signup challenges |
 | `VULOS_SIGNUP=off` | disable public self-serve signup |
+
+## The bundled webmail (needs a lilmail engine)
+
+The server itself — SMTP, IMAP, JMAP, CalDAV, CardDAV — is fully standalone and
+needs nothing else. The **bundled React webmail** (`@vulos/mail-ui`), however,
+speaks only the lilmail `/v1` JSON contract: vulos-mail is the *server*, and
+[lilmail](https://github.com/vul-os/lilmail) is the *client engine*. So the
+standalone webmail deployment is **vulos-mail + a lilmail engine + the UI**.
+
+vulos-mail reverse-proxies `/v1/*` to the engine and brokers the signed-in user's
+credentials to it (lilmail's CP-brokered credential mode). The flow:
+
+1. The webmail signs in via `POST /api/webmail/login` → vulos-mail validates the
+   mailbox credentials and sets an HttpOnly session cookie (the password is held
+   server-side, never in the browser).
+2. The UI's `/v1` calls carry that cookie; vulos-mail injects the credentials as
+   `X-Vulos-Mail-*` broker headers (gated by `LILMAIL_BROKER_SECRET`) and proxies
+   to the lilmail engine.
+3. lilmail connects back to vulos-mail's **IMAP** (reads) and **SMTP submission**
+   (sends) with those credentials and returns JSON.
+
+Run lilmail with `LILMAIL_BROKER_SECRET=<secret>`, then point vulos-mail at it:
+
+| Env | Purpose |
+|---|---|
+| `LILMAIL_ENGINE_URL` | base URL of the lilmail engine to proxy `/v1` to (e.g. `http://lilmail:8080`) |
+| `LILMAIL_BROKER_SECRET` | shared secret authorizing brokered credentials (must equal lilmail's `LILMAIL_BROKER_SECRET`) |
+| `VULOS_MAIL_IMAP_HOST` / `VULOS_MAIL_IMAP_PORT` | IMAP endpoint the engine dials back (default `VULOS_DOMAIN` / `993`; **implicit TLS** — lilmail dials IMAPS) |
+| `VULOS_MAIL_SMTP_HOST` / `VULOS_MAIL_SMTP_PORT` | SMTP submission endpoint the engine dials back (default `VULOS_DOMAIN` / `587`; STARTTLS, or `465` for implicit TLS) |
+
+If `LILMAIL_ENGINE_URL` is **unset**, the webmail's `/v1` calls return a clear
+`{"error":"mail engine not configured"}` (HTTP 503) and the UI shows a "mail
+engine not configured" state — the rest of the server (JMAP/IMAP/DAV and the
+`/api/webmail/send` API) is unaffected, so external mail clients keep working.
+
+> Note: `@vulos/mail-ui`'s `createMailClient`/`<MailApp/>` default `baseUrl` is
+> `/v1` (same-origin). The bundled webmail passes it explicitly
+> (`<MailApp baseUrl="/v1">`), which resolves to vulos-mail's proxy.
 
 ## The integration seam (why it stays independent)
 

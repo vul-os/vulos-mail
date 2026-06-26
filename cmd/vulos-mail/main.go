@@ -15,10 +15,13 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	imapadapter "github.com/vul-os/vulos-mail/adapters/imap"
@@ -36,12 +39,10 @@ import (
 	"github.com/vul-os/vulos-mail/internal/emailauth"
 	"github.com/vul-os/vulos-mail/internal/eventlog"
 	"github.com/vul-os/vulos-mail/internal/filter"
-	"github.com/vul-os/vulos-mail/internal/ids"
 	"github.com/vul-os/vulos-mail/internal/llm"
 	"github.com/vul-os/vulos-mail/internal/mailsettings"
 	"github.com/vul-os/vulos-mail/internal/metrics"
 	"github.com/vul-os/vulos-mail/internal/mime"
-	"github.com/vul-os/vulos-mail/internal/model"
 	"github.com/vul-os/vulos-mail/internal/scan"
 	"github.com/vul-os/vulos-mail/internal/seam"
 	"github.com/vul-os/vulos-mail/internal/seam/altcha"
@@ -317,7 +318,6 @@ func main() {
 		log.Fatalf("contacts store: %v", err)
 	}
 	carddavBe := &carddav.Backend{Auth: carddav.Auth(davAuth), Store: contactStore}
-	cgen := ids.NewGen()
 	apiKey := env("VULOS_API_KEY", "")
 	webapiBe := &webapi.Backend{
 		AuthKey: func(k string) (string, bool) { return acct, apiKey != "" && k == apiKey },
@@ -373,7 +373,130 @@ func main() {
 	httpMux.Handle("/dav/calendars/", caldavBe.Handler())
 	httpMux.Handle("/dav/addressbooks/", carddavBe.Handler())
 	httpMux.Handle("/api/", webapiBe.Handler())
-	// Webmail compose endpoint (Basic auth via the user's IMAP credentials).
+
+	// ── Webmail: lilmail mail-engine wiring ──────────────────────────────────
+	// The bundled webmail (@vulos/mail-ui <MailApp/>) talks exclusively to the
+	// lilmail /v1 JSON API for all mail data (identity, folders, messages, search,
+	// flags, delete, send). In the standalone deployment that engine is a lilmail
+	// process pointed at THIS server's IMAP/SMTP; vulos-mail brokers each /v1
+	// request to it using the signed-in user's credentials (lilmail's CP-brokered
+	// credential mode, gated by LILMAIL_BROKER_SECRET).
+	//
+	// Auth model: the webmail signs in via POST /api/webmail/login, which validates
+	// the mailbox credentials and mints an HttpOnly session cookie. The password is
+	// held server-side in the session (never in the browser) so the /v1 proxy can
+	// present it to the engine as broker headers on every request. The mail-ui's
+	// own /v1 calls ride that cookie (credentials: 'include').
+	webSessions := newWebSessionStore(12 * time.Hour)
+	secureCookie := tlsCfg != nil
+	setSessionCookie := func(w http.ResponseWriter, tok string, maxAge int) {
+		http.SetCookie(w, &http.Cookie{
+			Name: webSessionCookie, Value: tok, Path: "/",
+			HttpOnly: true, Secure: secureCookie, SameSite: http.SameSiteLaxMode,
+			MaxAge: maxAge,
+		})
+	}
+	// Sign in: validate mailbox credentials (Basic auth or JSON body), then mint a
+	// webmail session cookie holding them server-side for the /v1 proxy to broker.
+	httpMux.HandleFunc("/api/webmail/login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var u, p string
+		if bu, bp, ok := r.BasicAuth(); ok {
+			u, p = bu, bp
+		} else {
+			var req struct {
+				User     string `json:"user"`
+				Password string `json:"password"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
+				return
+			}
+			u, p = req.User, req.Password
+		}
+		if _, err := mgr.AuthIMAP(u, p); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"invalid credentials"}`))
+			return
+		}
+		tok := webSessions.create(u, p)
+		setSessionCookie(w, tok, int((12 * time.Hour).Seconds()))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"email": u, "username": u})
+	})
+	// Sign out: drop the server-side session and clear the cookie.
+	httpMux.HandleFunc("/api/webmail/logout", func(w http.ResponseWriter, r *http.Request) {
+		if c, err := r.Cookie(webSessionCookie); err == nil {
+			webSessions.delete(c.Value)
+		}
+		setSessionCookie(w, "", -1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
+	// /v1/* — the lilmail mail-engine surface the webmail reads from. With
+	// LILMAIL_ENGINE_URL set, proxy to that engine and inject the signed-in user's
+	// mailbox credentials as lilmail broker headers. Unset → a clear "engine not
+	// configured" response (503) rather than a confusing 404.
+	if engineURL := env("LILMAIL_ENGINE_URL", ""); engineURL == "" {
+		httpMux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"mail engine not configured (set LILMAIL_ENGINE_URL to a lilmail engine)"}`))
+		})
+		log.Printf("webmail: LILMAIL_ENGINE_URL unset — /v1 mail data disabled; the bundled webmail will show \"mail engine not configured\"")
+	} else {
+		target, perr := url.Parse(engineURL)
+		if perr != nil {
+			log.Fatalf("LILMAIL_ENGINE_URL %q: %v", engineURL, perr)
+		}
+		brokerSecret := env("LILMAIL_BROKER_SECRET", "")
+		if brokerSecret == "" {
+			log.Printf("WARNING: LILMAIL_ENGINE_URL set but LILMAIL_BROKER_SECRET empty — the engine will ignore brokered credentials and /v1 reads will 401")
+		}
+		imapHost := env("VULOS_MAIL_IMAP_HOST", domain)
+		imapPort := env("VULOS_MAIL_IMAP_PORT", "993")
+		smtpHost := env("VULOS_MAIL_SMTP_HOST", domain)
+		smtpPort := env("VULOS_MAIL_SMTP_PORT", "587")
+		proxy := httputil.NewSingleHostReverseProxy(target)
+		baseDirector := proxy.Director
+		proxy.Director = func(req *http.Request) {
+			baseDirector(req)
+			req.Host = target.Host
+		}
+		httpMux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
+			sess, ok := webSessions.get(cookieValue(r, webSessionCookie))
+			if !ok {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"not authenticated"}`))
+				return
+			}
+			// Never forward the browser's cookies/auth, and never let a client
+			// spoof the broker headers — set them fresh from the validated session.
+			r.Header.Del("Cookie")
+			r.Header.Del("Authorization")
+			r.Header.Set("X-Vulos-Broker-Auth", brokerSecret)
+			r.Header.Set("X-Vulos-Mail-Provider", "imap")
+			r.Header.Set("X-Vulos-Mail-Email", sess.user)
+			r.Header.Set("X-Vulos-Mail-Username", sess.user)
+			r.Header.Set("X-Vulos-Mail-Auth", "plain")
+			r.Header.Set("X-Vulos-Mail-Secret", sess.pass)
+			r.Header.Set("X-Vulos-Mail-Imap-Host", imapHost)
+			r.Header.Set("X-Vulos-Mail-Imap-Port", imapPort)
+			r.Header.Set("X-Vulos-Mail-Smtp-Host", smtpHost)
+			r.Header.Set("X-Vulos-Mail-Smtp-Port", smtpPort)
+			proxy.ServeHTTP(w, r)
+		})
+		log.Printf("webmail: proxying /v1 → lilmail engine %s (broker → imap %s:%s, smtp %s:%s)", engineURL, imapHost, imapPort, smtpHost, smtpPort)
+	}
+
+	// Webmail compose endpoint (Basic auth via the user's IMAP credentials). The
+	// bundled webmail now sends through the /v1 proxy (POST /v1/messages → lilmail);
+	// this endpoint remains as a simple authenticated send API for scripts/clients.
 	httpMux.HandleFunc("/api/webmail/send", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -421,232 +544,6 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
-	// Attachment download from a received message: ?id=<msgID>&n=<index>.
-	httpMux.HandleFunc("/api/webmail/attachment", func(w http.ResponseWriter, r *http.Request) {
-		u, p, ok := r.BasicAuth()
-		if !ok {
-			w.Header().Set("WWW-Authenticate", `Basic realm="vulos-mail"`)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		rt, err := mgr.AuthIMAP(u, p)
-		if err != nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		msg, ok := rt.Message(model.ID(r.URL.Query().Get("id")))
-		if !ok {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		raw, err := rt.Body(r.Context(), msg.BlobRef)
-		if err != nil {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		n, _ := strconv.Atoi(r.URL.Query().Get("n"))
-		a, ok := mime.AttachmentAt(raw, n)
-		if !ok {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		ct := a.Type
-		if ct == "" {
-			ct = "application/octet-stream"
-		}
-		w.Header().Set("Content-Type", ct)
-		name := a.Name
-		if name == "" {
-			name = "attachment"
-		}
-		w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
-		_, _ = w.Write(a.Data)
-	})
-
-	// Calendar (persistent, shared with the CalDAV server), Basic auth.
-	httpMux.HandleFunc("/api/webmail/calendar", func(w http.ResponseWriter, r *http.Request) {
-		u, p, ok := r.BasicAuth()
-		if !ok {
-			w.Header().Set("WWW-Authenticate", `Basic realm="vulos-mail"`)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		if _, err := mgr.AuthIMAP(u, p); err != nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			out := []map[string]any{}
-			for _, rsc := range calStore.List(u) {
-				for _, ev := range caldav.ParseEvents(rsc.Data) {
-					out = append(out, map[string]any{"id": rsc.Href, "summary": ev.Summary, "start": ev.Start, "end": ev.End})
-				}
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(out)
-		case http.MethodPost:
-			var d struct {
-				Summary string `json:"summary"`
-				Start   string `json:"start"`
-				End     string `json:"end"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&d); err != nil || d.Summary == "" {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			start, _ := time.Parse(time.RFC3339, d.Start)
-			if start.IsZero() {
-				start = time.Now()
-			}
-			end, _ := time.Parse(time.RFC3339, d.End)
-			uid := cgen.New()
-			ics, err := caldav.BuildEvent(caldav.Event{UID: uid, Summary: d.Summary, Start: start, End: end})
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			href := uid + ".ics"
-			calStore.Put(u, href, ics)
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"ok":true,"id":"` + href + `"}`))
-		case http.MethodDelete:
-			calStore.Delete(u, r.URL.Query().Get("id"))
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"ok":true}`))
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	// Contacts (persistent, shared with the CardDAV server), Basic auth.
-	httpMux.HandleFunc("/api/webmail/contacts", func(w http.ResponseWriter, r *http.Request) {
-		u, p, ok := r.BasicAuth()
-		if !ok {
-			w.Header().Set("WWW-Authenticate", `Basic realm="vulos-mail"`)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		if _, err := mgr.AuthIMAP(u, p); err != nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			res, _ := contactStore.List(u)
-			out := make([]map[string]any, 0, len(res))
-			for _, rsc := range res {
-				c := carddav.ParseContact(rsc.Data)
-				out = append(out, map[string]any{"id": rsc.Href, "name": c.Name, "email": c.Email})
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(out)
-		case http.MethodPost:
-			var c carddav.Contact
-			if err := json.NewDecoder(r.Body).Decode(&c); err != nil || c.Email == "" {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			vcf, err := carddav.BuildContact(c)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			href := cgen.New() + ".vcf"
-			if _, err := contactStore.Put(u, href, vcf); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"ok":true,"id":"` + href + `"}`))
-		case http.MethodDelete:
-			_ = contactStore.Delete(u, r.URL.Query().Get("id"))
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"ok":true}`))
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	// Webmail settings (signature + vacation), Basic auth.
-	httpMux.HandleFunc("/api/webmail/settings", func(w http.ResponseWriter, r *http.Request) {
-		u, p, ok := r.BasicAuth()
-		if !ok {
-			w.Header().Set("WWW-Authenticate", `Basic realm="vulos-mail"`)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		if _, err := mgr.AuthIMAP(u, p); err != nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		type vac struct {
-			Enabled bool   `json:"enabled"`
-			Subject string `json:"subject"`
-			Body    string `json:"body"`
-		}
-		type dto struct {
-			Signature string `json:"signature"`
-			Vacation  vac    `json:"vacation"`
-		}
-		if r.Method == http.MethodPost {
-			var d dto
-			if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			cur := mgr.GetSettings(u)
-			cur.Signature = d.Signature
-			cur.Vacation = mailsettings.Vacation{Enabled: d.Vacation.Enabled, Subject: d.Vacation.Subject, Body: d.Vacation.Body}
-			mgr.SetSettings(u, cur)
-		}
-		s := mgr.GetSettings(u)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(dto{Signature: s.Signature, Vacation: vac{s.Vacation.Enabled, s.Vacation.Subject, s.Vacation.Body}})
-	})
-	// Live updates: mint a push token (Basic auth), then stream changes over SSE
-	// (EventSource can't send Authorization headers, hence the token).
-	httpMux.HandleFunc("/api/webmail/pushtoken", func(w http.ResponseWriter, r *http.Request) {
-		u, p, ok := r.BasicAuth()
-		if !ok || func() bool { _, e := mgr.AuthIMAP(u, p); return e != nil }() {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"token":"` + mgr.PushToken(u) + `"}`))
-	})
-	httpMux.HandleFunc("/api/webmail/changes", func(w http.ResponseWriter, r *http.Request) {
-		acct, ok := mgr.AccountForToken(r.URL.Query().Get("token"))
-		if !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		fl, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		ch, cancel := mgr.Subscribe(acct)
-		defer cancel()
-		_, _ = w.Write([]byte("retry: 3000\n\n"))
-		fl.Flush()
-		for {
-			select {
-			case <-r.Context().Done():
-				return
-			case <-ch:
-				_, _ = w.Write([]byte("data: change\n\n"))
-				fl.Flush()
-			case <-time.After(25 * time.Second):
-				_, _ = w.Write([]byte(": ping\n\n"))
-				fl.Flush()
-			}
-		}
-	})
-
 	// Webmail static UI at the root (registered last; longest-prefix routing keeps
 	// the API/DAV/JMAP handlers above taking precedence). The webmail is a
 	// React+Vite SPA built into ./webmail/dist (run `cd webmail && npm run build`).
@@ -722,4 +619,74 @@ func serve(name, addr string, fn func() error) {
 	if err := fn(); err != nil {
 		log.Fatalf("%s: %v", name, err)
 	}
+}
+
+// webSessionCookie is the name of the HttpOnly cookie that ties a browser to a
+// server-side webmail session.
+const webSessionCookie = "vm_session"
+
+// webSession holds an authenticated webmail user's mailbox credentials. The
+// plaintext password lives only in memory, for the lifetime of the session, so
+// the /v1 reverse proxy can broker it to the lilmail engine on each request
+// (lilmail dials this server's IMAP/SMTP with it) — the same credential-custody
+// model the Vulos Cloud control plane uses.
+type webSession struct {
+	user    string
+	pass    string
+	expires time.Time
+}
+
+// webSessionStore is a small in-memory, TTL'd store of webmail sessions keyed by
+// an opaque cookie token.
+type webSessionStore struct {
+	mu  sync.Mutex
+	ttl time.Duration
+	m   map[string]webSession
+}
+
+func newWebSessionStore(ttl time.Duration) *webSessionStore {
+	return &webSessionStore{ttl: ttl, m: map[string]webSession{}}
+}
+
+// create mints a new random token bound to the given credentials and returns it.
+func (s *webSessionStore) create(user, pass string) string {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	tok := base64.RawURLEncoding.EncodeToString(b)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.m[tok] = webSession{user: user, pass: pass, expires: time.Now().Add(s.ttl)}
+	return tok
+}
+
+// get returns the session for a token, dropping and rejecting expired ones.
+func (s *webSessionStore) get(tok string) (webSession, bool) {
+	if tok == "" {
+		return webSession{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.m[tok]
+	if !ok {
+		return webSession{}, false
+	}
+	if time.Now().After(sess.expires) {
+		delete(s.m, tok)
+		return webSession{}, false
+	}
+	return sess, true
+}
+
+func (s *webSessionStore) delete(tok string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.m, tok)
+}
+
+// cookieValue returns the value of the named cookie, or "" when absent.
+func cookieValue(r *http.Request, name string) string {
+	if c, err := r.Cookie(name); err == nil {
+		return c.Value
+	}
+	return ""
 }
