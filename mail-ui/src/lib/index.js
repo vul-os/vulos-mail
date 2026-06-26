@@ -12,8 +12,11 @@ export { default as FolderList } from '../components/FolderList.jsx'
 export { default as MessageList } from '../components/MessageList.jsx'
 export { default as MessageView } from '../components/MessageView.jsx'
 export { default as Compose } from '../components/Compose.jsx'
+export { default as Settings } from '../components/Settings.jsx'
 export { default as Icon } from '../components/Icon.jsx'
 
+export { groupThreads } from '../components/threading.js'
+export { useSettings, DEFAULT_SETTINGS } from '../components/useSettings.js'
 export { sanitizeEmailHtml, stripHtml } from '../components/sanitize.js'
 export {
   createMailClient,

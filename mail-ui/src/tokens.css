@@ -48,10 +48,45 @@
   --radius-sm: 6px;
   --radius: 10px;
   --radius-lg: 16px;
-  --sidebar-w: 248px;
-  --list-w: 380px;
+  --radius-pill: 999px;
+  --sidebar-w: 256px;
+  --sidebar-w-rail: 68px;
+  --list-w: 400px;
+  --panel-w: 372px;
   --ease: cubic-bezier(.2, .7, .2, 1);
   --dur: .16s;
+  --dur-slow: .28s;
+
+  /* Spacing scale. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+
+  /* Elevation (tokenised — no raw hex). */
+  --shadow-1: 0 1px 2px color-mix(in srgb, var(--bg-base) 60%, transparent);
+  --shadow-2: 0 6px 24px color-mix(in srgb, var(--bg-base) 70%, transparent);
+  --shadow-pop: 0 16px 48px color-mix(in srgb, var(--bg-base) 78%, transparent);
+
+  /* Density (overridden by [data-density]). */
+  --row-pad-y: 10px;
+  --row-min-h: 56px;
+
+  /* On-accent text (white on the blue accent, both themes). */
+  --on-accent: #ffffff;
+
+  /* Status soft fills. */
+  --danger-soft: color-mix(in srgb, var(--danger) 16%, transparent);
+  --success: #22c55e;
+  --success-soft: color-mix(in srgb, var(--success) 16%, transparent);
+}
+
+/* Density toggle — comfortable (default) vs compact. */
+[data-density="compact"] {
+  --row-pad-y: 5px;
+  --row-min-h: 40px;
 }
 
 [data-theme="light"] {

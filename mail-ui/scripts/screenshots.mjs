@@ -88,40 +88,89 @@ async function main() {
 
   const browser = await chromium.launch({ headless: true })
   const context = await browser.newContext({
-    viewport: { width: 1280, height: 800 },
+    viewport: { width: 1366, height: 860 },
     colorScheme: 'dark',
     deviceScaleFactor: 2,
   })
   const page = await context.newPage()
 
+  const settle = (ms = 350) => page.waitForTimeout(ms)
+
   try {
     await page.goto(baseUrl, { waitUntil: 'networkidle' })
+    await page.waitForSelector('.vm-row', { timeout: 10000 })
+    await settle()
 
-    // ── Mail (default tab): open the first message → three-pane reading view.
-    console.log('\nCapturing: mail (three-pane)')
-    await page.waitForSelector('.vm-app', { timeout: 10000 })
-    const firstRow = await page.$('.vm-row')
-    if (firstRow) {
-      await firstRow.click()
-      await page.waitForSelector('.vm-msg-body', { timeout: 5000 }).catch(() => {})
-      await page.waitForTimeout(300)
-    }
-    await shot(page, 'mail', 'Three-pane mail view (folders | list | reading pane)')
-    await shot(page, 'hero', 'Hero — message open in the three-pane view')
+    // ── Inbox: three-pane list (reading pane empty placeholder).
+    console.log('\nCapturing: inbox (three-pane)')
+    await shot(page, 'inbox', 'Three-pane inbox (rail | list | reading pane)')
+    await shot(page, 'mail', 'Three-pane inbox (alias)')
 
-    // ── Calendar tab: month grid.
-    console.log('\nCapturing: calendar')
-    await page.getByRole('button', { name: 'calendar' }).click()
+    // ── Thread: open the multi-message roadmap conversation.
+    console.log('Capturing: thread')
+    await page.getByText('Product roadmap Q3 — feedback welcome').first().click()
+    await page.waitForSelector('.vm-msg-body', { timeout: 5000 }).catch(() => {})
+    await settle()
+    await shot(page, 'thread', 'Conversation view (collapsible thread, latest expanded)')
+    await shot(page, 'hero', 'Hero — open conversation in the three-pane view')
+
+    // ── Search: query + results + active-query chip.
+    console.log('Capturing: search')
+    const search = page.getByLabel('Search mail')
+    await search.click()
+    await search.fill('roadmap')
+    await search.press('Enter')
+    await settle()
+    await shot(page, 'search', 'Search results with active-query chip')
+    await search.fill('')
+    await page.getByLabel('Clear search').click().catch(() => {})
+    await settle(200)
+
+    // ── Compose: docked composer.
+    console.log('Capturing: compose')
+    await page.getByRole('button', { name: 'Compose' }).first().click()
+    await page.waitForSelector('.vm-compose', { timeout: 5000 })
+    await page.getByLabel('Subject').fill('Lunch on Thursday?')
+    await page.locator('.vm-ctext').click()
+    await page.keyboard.type('Hi Alice — are you free for lunch on Thursday to talk roadmap?')
+    // Type a partial recipient last so the autocomplete dropdown reads cleanly.
+    await page.getByLabel('To', { exact: true }).click()
+    await page.keyboard.type('ali')
+    await settle(500)
+    await shot(page, 'compose', 'Docked compose with contact autocomplete + rich text')
+    await page.getByLabel('Close').first().click().catch(() => {})
+    await settle(200)
+
+    // ── Calendar side panel.
+    console.log('Capturing: calendar')
+    await page.getByRole('button', { name: 'Calendar' }).click()
     await page.waitForSelector('.vm-cal-grid', { timeout: 5000 })
-    await page.waitForTimeout(300)
-    await shot(page, 'calendar', 'Calendar month view')
+    await settle()
+    await shot(page, 'calendar', 'Calendar month view (side panel)')
+    await page.getByRole('button', { name: 'Calendar' }).click()
 
-    // ── Contacts tab: list.
-    console.log('\nCapturing: contacts')
-    await page.getByRole('button', { name: 'contacts' }).click()
+    // ── Contacts side panel.
+    console.log('Capturing: contacts')
+    await page.getByRole('button', { name: 'Contacts' }).click()
     await page.waitForSelector('.vm-contact-list', { timeout: 5000 })
-    await page.waitForTimeout(300)
-    await shot(page, 'contacts', 'Contacts list')
+    await settle()
+    await shot(page, 'contacts', 'Contacts list (side panel)')
+    await page.getByRole('button', { name: 'Contacts' }).click()
+
+    // ── Settings side panel (light theme preview included).
+    console.log('Capturing: settings')
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.waitForSelector('.vm-settings', { timeout: 5000 })
+    await settle()
+    await shot(page, 'settings', 'Settings: density, reading pane, theme, signature')
+
+    // ── Mobile: single-pane inbox at 390px (reload resets panel state).
+    console.log('Capturing: mobile')
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.reload({ waitUntil: 'networkidle' })
+    await page.waitForSelector('.vm-row', { timeout: 5000 })
+    await settle()
+    await shot(page, 'mobile', 'Mobile single-pane inbox (≤768px flow)')
   } finally {
     await browser.close()
     if (httpServer) httpServer.close()

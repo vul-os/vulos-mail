@@ -104,11 +104,27 @@ export function createMailClient(opts = {}) {
       })
     },
 
-    /** DELETE /v1/messages/:uid?folder= → 204 */
-    deleteMessage(uid, { folder = DEFAULT_FOLDER } = {}) {
+    /**
+     * DELETE /v1/messages/:uid?folder=&hard= → 204
+     * Default moves to Trash (lilmail branch v1-mail-actions); hard=true expunges.
+     */
+    deleteMessage(uid, { folder = DEFAULT_FOLDER, hard = false } = {}) {
       return request(`/messages/${encodeURIComponent(uid)}`, {
         method: 'DELETE',
+        query: { folder, hard: hard ? 'true' : undefined },
+      })
+    },
+
+    /**
+     * POST /v1/messages/:uid/move?folder= body {toFolder} → 204
+     * Archive / move to another folder via IMAP MOVE (lilmail v1-mail-actions).
+     * Rejects if the endpoint is absent so callers can degrade gracefully.
+     */
+    moveMessage(uid, toFolder, { folder = DEFAULT_FOLDER } = {}) {
+      return request(`/messages/${encodeURIComponent(uid)}/move`, {
+        method: 'POST',
         query: { folder },
+        body: { toFolder },
       })
     },
 
