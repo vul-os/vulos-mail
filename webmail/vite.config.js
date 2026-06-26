@@ -14,5 +14,8 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    // The mail UI (and its tests) now live in @vulos/mail-ui; the webmail shell
+    // is a thin mount, so there are no local tests to run.
+    passWithNoTests: true,
   },
 });

@@ -1,0 +1,82 @@
+/* ════════════════════════════════════════════════════════════════════════
+   @vulos/mail-ui — design tokens (OSS-native)
+   Mirrors vulos-cloud/DESIGN_OSS_NATIVE.md: near-black canvas, mono-led type,
+   themeable --accent (blue-500), reserved --brand (Vula purple). Light theme
+   via [data-theme="light"]. Components consume ONLY these tokens — no inline
+   hex anywhere in the component CSS.
+   ════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Accent (user-themeable) + reserved brand. */
+  --accent: #3b82f6;
+  --accent-hover: color-mix(in srgb, var(--accent) 80%, black);
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --brand: #c96aff;
+
+  /* Surfaces. */
+  --bg-base: #0c0c0c;
+  --bg-surface: #111111;
+  --bg-elevated: #1a1a1a;
+  --bg-hover: #1e1e1e;
+  --bg-selected: #1a1a2e;
+  --bg-selected-border: #1e1e3a;
+
+  /* Borders. */
+  --border-subtle: #111111;
+  --border-default: #1a1a1a;
+  --border-strong: #222222;
+  --border-emphasis: #333333;
+
+  /* Text. */
+  --text-primary: #e5e5e5;
+  --text-secondary: #cccccc;
+  --text-tertiary: #999999;
+  --text-muted: #888888;
+  --text-faint: #666666;
+  --text-ghost: #555555;
+  --text-dim: #444444;
+
+  /* Status. */
+  --danger: #f43f5e;
+  --warn: #f59e0b;
+
+  /* Type. */
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+
+  /* Geometry + motion. */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
+  --sidebar-w: 248px;
+  --list-w: 380px;
+  --ease: cubic-bezier(.2, .7, .2, 1);
+  --dur: .16s;
+}
+
+[data-theme="light"] {
+  --accent: #3b82f6;
+  --accent-hover: color-mix(in srgb, var(--accent) 80%, white);
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --brand: #9333d6;
+
+  --bg-base: #fbfbfa;
+  --bg-surface: #ffffff;
+  --bg-elevated: #f3f3f1;
+  --bg-hover: #f0f0ee;
+  --bg-selected: #eef2ff;
+  --bg-selected-border: #dbe3ff;
+
+  --border-subtle: #ededeb;
+  --border-default: #e4e4e1;
+  --border-strong: #d8d8d4;
+  --border-emphasis: #c4c4bf;
+
+  --text-primary: #1a1a1a;
+  --text-secondary: #2e2e2e;
+  --text-tertiary: #555555;
+  --text-muted: #666666;
+  --text-faint: #888888;
+  --text-ghost: #aaaaaa;
+  --text-dim: #bbbbbb;
+}

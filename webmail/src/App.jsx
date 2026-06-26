@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { MailApp } from "@vulos/mail-ui";
 import { JMAP } from "./lib/jmap.js";
 import Login from "./components/Login.jsx";
-import Mail from "./components/Mail.jsx";
 
-// Single shared JMAP client (same instance shared across login + app, exactly
-// like the vanilla SPA's module-scoped `jmap`).
+// Auth transport for the app shell (sign-in / sign-up / outbound send). The mail
+// surface itself is now the shared @vulos/mail-ui <MailApp/>, which talks to the
+// lilmail /v1 JSON API. This file is intentionally thin: shell + auth + mount.
 const jmap = new JMAP("");
 
 export default function App() {
@@ -42,10 +43,24 @@ export default function App() {
     location.reload();
   }, []);
 
+  // Compose send: @vulos/mail-ui sends via POST /v1/messages by default, but
+  // vulos-mail submits outbound mail over JMAP, so we override onSend to route
+  // through jmap.send. The shared <Compose/> passes {to, cc, bcc, subject, text}.
+  const onSend = useCallback(async ({ to, cc, bcc, subject, text }) => {
+    const list = (s) => (s || "").split(",").map((x) => x.trim()).filter(Boolean);
+    await jmap.send({
+      to: list(to),
+      cc: list(cc),
+      bcc: list(bcc),
+      subject: subject || "",
+      text: text || "",
+    });
+  }, []);
+
   // Avoid a flash of the login screen while restoring a session.
   if (!ready) return null;
 
   return authed
-    ? <Mail jmap={jmap} onLogout={onLogout} />
+    ? <MailApp baseUrl="/v1" onSend={onSend} onAuthError={onLogout} />
     : <Login jmap={jmap} onLogin={onLogin} />;
 }

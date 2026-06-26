@@ -1,8 +1,8 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import "./styles.css";
+import "@vulos/mail-ui/style.css"; // shared mail UI: OSS-native tokens + components
+import "./styles.css";              // app shell + login styles (themes the mail UI)
 import App from "./App.jsx";
-import { ToastProvider } from "./components/Toasts.jsx";
 
 // Apply the saved theme before first paint (parity with the vanilla SPA).
 function applyTheme(t) {
@@ -15,8 +15,6 @@ try { applyTheme(localStorage.getItem("vulos-mail.theme") || "dark"); } catch { 
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
-    <ToastProvider>
-      <App />
-    </ToastProvider>
+    <App />
   </StrictMode>
 );

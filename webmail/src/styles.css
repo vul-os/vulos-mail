@@ -59,7 +59,7 @@
 :root[data-theme="light"] .avatar{color:#0c0c0c}
 
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%}
+html,body,#root{height:100%}
 body{
   font-family:var(--font-sans);
   background:var(--bg-base); color:var(--text-primary);
