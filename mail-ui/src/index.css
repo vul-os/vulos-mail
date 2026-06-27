@@ -323,9 +323,14 @@
 /* ── Settings ─────────────────────────────────────────────────────────────── */
 .vm-settings { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .vm-panel-body { padding: var(--sp-4); overflow-y: auto; display: flex; flex-direction: column; gap: var(--sp-5); }
-.vm-set-row { display: flex; flex-direction: column; gap: var(--sp-2); }
-.vm-set-inline { flex-direction: row; align-items: center; justify-content: space-between; }
+.vm-set-section { display: flex; flex-direction: column; gap: var(--sp-3); }
+.vm-set-section-title { margin: 0; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--text-faint); }
+.vm-set-group { display: flex; flex-direction: column; gap: var(--sp-4); padding: var(--sp-4); background: var(--bg-base); border: 1px solid var(--border-default); border-radius: var(--radius); }
+.vm-set-row { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.vm-set-inline { flex-direction: row; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+.vm-set-line { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .vm-set-label { font-size: 12.5px; color: var(--text-secondary); font-weight: 600; }
+.vm-set-desc { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--text-faint); }
 .vm-segctl { display: inline-flex; gap: 2px; padding: 3px; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); }
 .vm-seg { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: var(--radius-sm); color: var(--text-tertiary); font-size: 12.5px; transition: background var(--dur), color var(--dur); }
 .vm-seg .vm-icon { width: 15px; height: 15px; }
@@ -336,6 +341,40 @@
 .vm-toggle.vm-on { background: var(--accent); }
 .vm-toggle-knob { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--on-accent); transition: transform var(--dur) var(--ease); }
 .vm-toggle.vm-on .vm-toggle-knob { transform: translateX(18px); }
+
+/* ── Account section (host-supplied: identity / connection / password) ─────────
+   Rendered inside the Settings panel via <MailApp settingsExtra>. Uses the same
+   tokens as the rest of the UI so a host's account surface stays on-brand. */
+.vm-acct { display: flex; flex-direction: column; gap: var(--sp-2); }
+.vm-acct-card { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3); background: var(--bg-base); border: 1px solid var(--border-default); border-radius: var(--radius); }
+.vm-acct-avatar { width: 40px; height: 40px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 16px; font-weight: 700; color: var(--on-accent); background: var(--accent); }
+.vm-acct-who { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.vm-acct-email { font-size: 13px; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vm-acct-sub { font-size: 11.5px; color: var(--text-faint); }
+.vm-kv { display: flex; align-items: center; gap: var(--sp-2); padding: 8px 0; border-bottom: 1px solid var(--border-subtle); }
+.vm-kv:last-child { border-bottom: 0; }
+.vm-kv-key { flex: none; width: 96px; font-size: 12px; color: var(--text-muted); }
+.vm-kv-val { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vm-copybtn { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--radius-sm); color: var(--text-faint); transition: background var(--dur), color var(--dur); }
+.vm-copybtn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.vm-copybtn.vm-ok { color: var(--success); }
+.vm-copybtn .vm-icon { width: 15px; height: 15px; }
+.vm-field { display: flex; flex-direction: column; gap: var(--sp-1); }
+.vm-field > span { font-size: 12px; color: var(--text-muted); }
+.vm-input-wrap { position: relative; display: flex; align-items: center; }
+.vm-input { width: 100%; background: var(--bg-base); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 9px 12px; font-size: 13px; outline: none; transition: border-color var(--dur); }
+.vm-input:focus { border-color: var(--accent); }
+.vm-input-wrap .vm-input { padding-right: 38px; }
+.vm-input-reveal { position: absolute; right: 4px; display: grid; place-items: center; width: 30px; height: 30px; border-radius: var(--radius-sm); color: var(--text-faint); }
+.vm-input-reveal:hover { color: var(--text-primary); }
+.vm-input-reveal .vm-icon { width: 16px; height: 16px; }
+.vm-acct-msg { font-size: 12px; padding: 7px 10px; border-radius: var(--radius-sm); }
+.vm-acct-msg.vm-ok { color: var(--success); background: var(--success-soft); }
+.vm-acct-msg.vm-err { color: var(--danger); background: var(--danger-soft); }
+.vm-acct-actions { display: flex; gap: var(--sp-2); align-items: center; }
+.vm-btn-block { width: 100%; }
+.vm-acct-note { font-size: 11.5px; color: var(--text-faint); display: flex; align-items: flex-start; gap: 6px; line-height: 1.45; }
+.vm-acct-note .vm-icon { width: 14px; height: 14px; flex: none; margin-top: 1px; color: var(--text-ghost); }
 
 /* ── Compose dock ─────────────────────────────────────────────────────────── */
 .vm-compose-stack { position: fixed; right: var(--sp-6); bottom: 0; z-index: 80; display: flex; align-items: flex-end; gap: var(--sp-3); }
@@ -449,6 +488,30 @@
 .vm-contact-main { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .vm-contact-name { font-size: 13px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vm-contact-email { font-size: 11.5px; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   Motion + finishing touches (all suppressed under prefers-reduced-motion)
+   ════════════════════════════════════════════════════════════════════════ */
+@keyframes vm-fade-up { from { opacity: 0; transform: translateY(8px); } }
+@keyframes vm-panel-in { from { opacity: 0; transform: translateX(10px); } }
+@keyframes vm-dock-in { from { opacity: 0; transform: translateY(16px) scale(.99); } }
+
+/* Side panel glides in from the right edge when opened. */
+.vm-panel { animation: vm-panel-in var(--dur-slow) var(--ease); }
+/* Compose dock rises into view. */
+.vm-compose-dock { animation: vm-dock-in var(--dur-slow) var(--ease); }
+/* A freshly opened conversation fades up (re-fires per thread via React key). */
+.vm-thread { animation: vm-fade-up var(--dur-slow) var(--ease); }
+/* Expanded message bodies reveal gently. */
+.vm-msg:not(.vm-collapsed) .vm-msg-body { animation: vm-fade-up var(--dur) var(--ease); }
+
+/* The open conversation's avatar gets a soft accent ring in the list. */
+.vm-row.vm-active .vm-avatar { box-shadow: 0 0 0 2px var(--bg-selected), 0 0 0 3.5px var(--accent); }
+/* Collapsed thread messages lift slightly on hover. */
+.vm-msg.vm-collapsed:hover { background: var(--bg-surface); }
+/* Compose send button: subtle accent shadow to anchor the primary action. */
+.vm-compose-foot .vm-btn-primary { box-shadow: var(--shadow-1); }
+.vm-compose-foot .vm-btn-primary:hover:not(:disabled) { box-shadow: var(--shadow-2); }
 
 /* ════════════════════════════════════════════════════════════════════════
    Responsive

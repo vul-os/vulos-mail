@@ -85,6 +85,23 @@ engine not configured" state — the rest of the server (JMAP/IMAP/DAV and the
 > `/v1` (same-origin). The bundled webmail passes it explicitly
 > (`<MailApp baseUrl="/v1">`), which resolves to vulos-mail's proxy.
 
+### Account & settings (self-hoster surface)
+
+The webmail's **Settings → Account** section is backed by two session-scoped
+endpoints on vulos-mail itself (independent of the lilmail engine), so a
+self-hoster gets a sensible account surface even with `/v1` degraded:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/webmail/account` | The signed-in identity, the **IMAP/SMTP connection settings** (host/port/security, from `VULOS_MAIL_*`) to configure an external mail client, and the deployment's `capabilities` (`changePassword`, `signup`, `engine`). |
+| `POST /api/webmail/account/password` | Change the mailbox password in place: re-verifies the current password, persists the new one to the local account store, and rotates the live session's brokered credential (no forced re-login). |
+
+The UI only shows what the backend reports: change-password is offered **only on
+the standalone local-identity path** (hidden when `VULOS_CP_URL` makes the cloud
+control plane own identity — the endpoint then returns `501`). The IMAP/SMTP
+client-setup card always reflects the configured `VULOS_MAIL_IMAP_*` /
+`VULOS_MAIL_SMTP_*` values, and **Sign out** clears the session.
+
 ## The integration seam (why it stays independent)
 
 The core depends only on the interfaces in [`internal/seam`](internal/seam/seam.go):

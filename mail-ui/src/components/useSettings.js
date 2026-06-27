@@ -9,7 +9,7 @@ const KEY = 'vulos-mail.settings.v1'
 export const DEFAULT_SETTINGS = {
   density: 'comfortable',     // 'comfortable' | 'compact'
   readingPane: 'right',       // 'right' | 'bottom' | 'off'
-  theme: 'dark',             // 'dark' | 'light'
+  theme: 'system',           // 'system' (follow OS) | 'dark' | 'light'
   shortcuts: true,
   threaded: true,
   signature: '',

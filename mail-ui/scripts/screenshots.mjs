@@ -172,12 +172,20 @@ async function main() {
     await shot(page, 'contacts', 'Contacts list (side panel)')
     await page.getByRole('button', { name: 'Contacts' }).click()
 
-    // ── Settings side panel (light theme preview included).
-    console.log('Capturing: settings')
+    // ── Settings side panel: account surface (top) + preferences (scrolled).
+    console.log('Capturing: account + settings')
     await page.getByRole('button', { name: 'Settings' }).click()
     await page.waitForSelector('.vm-settings', { timeout: 5000 })
     await settle()
-    await shot(page, 'settings', 'Settings: density, reading pane, theme, signature')
+    // Top of the panel: the standalone account / mail-client-setup surface.
+    await shot(page, 'account', 'Account: identity, IMAP/SMTP client setup, change password, sign out')
+    // Scroll to the built-in preferences (theme/density/layout/composing).
+    await page.evaluate(() => {
+      const body = document.querySelector('.vm-settings .vm-panel-body')
+      if (body) body.scrollTop = body.scrollHeight
+    })
+    await settle()
+    await shot(page, 'settings', 'Settings: theme (auto/dark/light), density, reading pane, signature')
 
     // ── Mobile: single-pane inbox at 390px (reload resets panel state).
     console.log('Capturing: mobile')

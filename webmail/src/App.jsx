@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MailApp, Calendar, Contacts } from "@vulos/mail-ui";
 import Login from "./components/Login.jsx";
+import AccountSettings from "./components/AccountSettings.jsx";
 
 // Which Mail surface to render, derived from the URL path. The Mail product
 // exposes Calendar and Contacts as standalone surfaces (mail.vulos.org/calendar
@@ -70,6 +71,9 @@ export default function App() {
     default:
       // No onSend override: the mail-ui sends via POST /v1/messages, which the
       // server proxies to the lilmail engine (submits over SMTP back to vulos-mail).
-      return <MailApp baseUrl="/v1" onAuthError={onLogout} />;
+      // settingsExtra injects the standalone self-hoster's account surface
+      // (identity, IMAP/SMTP client setup, change password, sign out) into the
+      // shared mail UI's Settings panel — backed by /api/webmail/account.
+      return <MailApp baseUrl="/v1" onAuthError={onLogout} settingsExtra={<AccountSettings onLogout={onLogout} />} />;
   }
 }

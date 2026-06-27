@@ -28,8 +28,11 @@ const UNDO_MS = 6000
  * @param {object} [props.client]   - pre-built client (overrides baseUrl; tests/demo)
  * @param {(draft)=>(void|Promise<void>)} [props.onSend] - override default send
  * @param {(err)=>void} [props.onAuthError]
+ * @param {import('react').ReactNode} [props.settingsExtra] - host-supplied
+ *   section(s) rendered at the top of the Settings panel (e.g. the standalone
+ *   webmail's account / connection / change-password surface).
  */
-export default function MailApp({ baseUrl = '/v1', client: clientProp, onSend, onAuthError }) {
+export default function MailApp({ baseUrl = '/v1', client: clientProp, onSend, onAuthError, settingsExtra }) {
   const client = useMemo(() => clientProp ?? createMailClient({ baseUrl }), [clientProp, baseUrl])
   const sendDraft = useMemo(() => onSend ?? ((d) => client.sendMessage(d)), [onSend, client])
 
@@ -60,6 +63,22 @@ export default function MailApp({ baseUrl = '/v1', client: clientProp, onSend, o
 
   // Apply theme to the app root.
   const rootRef = useRef(null)
+
+  // Theme = 'system' follows the OS light/dark setting live; 'dark'/'light' are
+  // explicit. We resolve to a concrete value for the data-theme attribute.
+  const [systemDark, setSystemDark] = useState(
+    () => typeof matchMedia === 'undefined' || matchMedia('(prefers-color-scheme: dark)').matches,
+  )
+  useEffect(() => {
+    if (typeof matchMedia === 'undefined') return
+    const mq = matchMedia('(prefers-color-scheme: dark)')
+    const onChange = (e) => setSystemDark(e.matches)
+    mq.addEventListener?.('change', onChange)
+    return () => mq.removeEventListener?.('change', onChange)
+  }, [])
+  const resolvedTheme = settings.theme === 'light' || settings.theme === 'dark'
+    ? settings.theme
+    : (systemDark ? 'dark' : 'light')
 
   // Pending deferred-commit timers for undoable (destructive) actions.
   const undoTimers = useRef(new Map())
@@ -358,7 +377,7 @@ export default function MailApp({ baseUrl = '/v1', client: clientProp, onSend, o
     <div
       ref={rootRef}
       className="vm-app"
-      data-theme={settings.theme}
+      data-theme={resolvedTheme}
       data-density={settings.density}
       data-rp={settings.readingPane}
       data-open={openThread ? '1' : '0'}
@@ -435,7 +454,7 @@ export default function MailApp({ baseUrl = '/v1', client: clientProp, onSend, o
 
       {panel !== 'none' && (
         <aside className="vm-panel" aria-label={panel}>
-          {panel === 'settings' && <Settings settings={settings} onChange={setSettings} onClose={() => setPanel('none')} />}
+          {panel === 'settings' && <Settings settings={settings} onChange={setSettings} onClose={() => setPanel('none')} extra={settingsExtra} />}
           {panel === 'calendar' && (
             <div className="vm-panel-embed">
               <div className="vm-panel-head"><h2><Icon name="calendar" className="vm-icon" /> Calendar</h2><button type="button" className="vm-iconbtn" aria-label="Close" onClick={() => setPanel('none')}><Icon name="close" /></button></div>

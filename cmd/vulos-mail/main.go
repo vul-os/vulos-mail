@@ -437,6 +437,90 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
+	// Mailbox connection settings (host/port) — both brokered to the lilmail
+	// engine below AND surfaced to the self-hoster so they can configure a desktop
+	// or mobile mail client (Thunderbird, Apple Mail, K-9…) against this server.
+	imapHost := env("VULOS_MAIL_IMAP_HOST", domain)
+	imapPort := env("VULOS_MAIL_IMAP_PORT", "993")
+	smtpHost := env("VULOS_MAIL_SMTP_HOST", domain)
+	smtpPort := env("VULOS_MAIL_SMTP_PORT", "587")
+	// Standalone (local identity) owns passwords, so the webmail can offer an
+	// in-place change-password control. Under the cloud control plane, identity is
+	// owned elsewhere, so the control is hidden — the UI only ever offers what the
+	// backend can actually do.
+	passwordChangeable := env("VULOS_CP_URL", "") == ""
+	signupEnabled := env("VULOS_SIGNUP", "") != "off"
+	engineConfigured := env("LILMAIL_ENGINE_URL", "") != ""
+
+	// Account surface for the standalone self-hoster: the signed-in identity, the
+	// exact IMAP/SMTP connection settings for an external client, and which
+	// account operations this deployment supports. Session-authenticated.
+	httpMux.HandleFunc("/api/webmail/account", func(w http.ResponseWriter, r *http.Request) {
+		sess, ok := webSessions.get(cookieValue(r, webSessionCookie))
+		if !ok {
+			writeJSONErr(w, http.StatusUnauthorized, "not authenticated")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"email":  sess.user,
+			"domain": domain,
+			"imap":   map[string]string{"host": imapHost, "port": imapPort, "security": "SSL/TLS"},
+			"smtp":   map[string]string{"host": smtpHost, "port": smtpPort, "security": "STARTTLS"},
+			"capabilities": map[string]bool{
+				"changePassword": passwordChangeable,
+				"signup":         signupEnabled,
+				"engine":         engineConfigured,
+			},
+		})
+	})
+
+	// Change the signed-in mailbox password in place (local identity only). The
+	// current password is re-verified, the new one is persisted, and the live
+	// session's brokered credential is rotated so /v1 keeps working without a
+	// forced re-login.
+	httpMux.HandleFunc("/api/webmail/account/password", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		tok := cookieValue(r, webSessionCookie)
+		sess, ok := webSessions.get(tok)
+		if !ok {
+			writeJSONErr(w, http.StatusUnauthorized, "not authenticated")
+			return
+		}
+		if !passwordChangeable {
+			writeJSONErr(w, http.StatusNotImplemented, "password changes are managed by the control plane")
+			return
+		}
+		var req struct {
+			CurrentPassword string `json:"currentPassword"`
+			NewPassword     string `json:"newPassword"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONErr(w, http.StatusBadRequest, "bad request")
+			return
+		}
+		if len(req.NewPassword) < 8 {
+			writeJSONErr(w, http.StatusBadRequest, "new password must be at least 8 characters")
+			return
+		}
+		if _, err := mgr.AuthIMAP(sess.user, req.CurrentPassword); err != nil {
+			writeJSONErr(w, http.StatusUnauthorized, "current password is incorrect")
+			return
+		}
+		if err := localID.Upsert(sess.user, req.NewPassword); err != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "could not update password")
+			return
+		}
+		// Rotate the brokered credential in the live session so subsequent /v1
+		// requests authenticate with the new password.
+		webSessions.setPass(tok, req.NewPassword)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
+
 	// /v1/* — the lilmail mail-engine surface the webmail reads from. With
 	// LILMAIL_ENGINE_URL set, proxy to that engine and inject the signed-in user's
 	// mailbox credentials as lilmail broker headers. Unset → a clear "engine not
@@ -457,10 +541,6 @@ func main() {
 		if brokerSecret == "" {
 			log.Printf("WARNING: LILMAIL_ENGINE_URL set but LILMAIL_BROKER_SECRET empty — the engine will ignore brokered credentials and /v1 reads will 401")
 		}
-		imapHost := env("VULOS_MAIL_IMAP_HOST", domain)
-		imapPort := env("VULOS_MAIL_IMAP_PORT", "993")
-		smtpHost := env("VULOS_MAIL_SMTP_HOST", domain)
-		smtpPort := env("VULOS_MAIL_SMTP_PORT", "587")
 		proxy := httputil.NewSingleHostReverseProxy(target)
 		baseDirector := proxy.Director
 		proxy.Director = func(req *http.Request) {
@@ -692,6 +772,25 @@ func (s *webSessionStore) delete(tok string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.m, tok)
+}
+
+// setPass rotates the brokered password held in an existing session (after an
+// in-place password change), preserving the token and expiry so the browser
+// stays signed in.
+func (s *webSessionStore) setPass(tok, pass string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess, ok := s.m[tok]; ok {
+		sess.pass = pass
+		s.m[tok] = sess
+	}
+}
+
+// writeJSONErr writes a JSON {"error": msg} body with the given status code.
+func writeJSONErr(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 // cookieValue returns the value of the named cookie, or "" when absent.

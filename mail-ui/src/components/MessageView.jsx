@@ -96,7 +96,7 @@ export default function MessageView({
           <button type="button" className="vm-iconbtn vm-danger" aria-label="Delete" onClick={onDelete}><Icon name="trash" /></button>
         </div>
 
-        <div className="vm-thread">
+        <div className="vm-thread" key={thread.id}>
           {messages.map((m, i) => {
             const isOpen = expanded.has(m.id)
             const isLast = i === messages.length - 1

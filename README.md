@@ -70,8 +70,12 @@ code. vulos-mail runs standalone **and** is combined by Vulos Workspace.
   responsive three-pane → single-pane phone layout.
 - Compose / reply with rich body and recipient fields; outbound mail is sent
   through the lilmail engine (`POST /v1/messages` → SMTP submission).
-- Search, mark read/unread, star, delete; OSS-native dark/light design tokens
-  (mono-led, themeable accent, Vulos-purple brand).
+- Search, mark read/unread, star, delete; OSS-native **Auto / dark / light**
+  design tokens (mono-led, themeable accent, Vulos-purple brand).
+- **Account & settings** for the self-hoster: identity, **IMAP/SMTP client
+  setup** to wire up Thunderbird/Apple Mail/K-9, **change password**, and sign
+  out — backed by `/api/webmail/account` (degrades to only what the server
+  supports; change-password is hidden under the cloud control plane).
 - Self-serve **signup** that solves the Altcha PoW in-browser and signs you in.
 - **XSS-inert email rendering** — HTML bodies are sanitized (DOMPurify) to an
   inert safe subset; scripts / `onerror` / `javascript:` never survive.
