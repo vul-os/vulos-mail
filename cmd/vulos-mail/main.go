@@ -548,6 +548,17 @@ func main() {
 	// the API/DAV/JMAP handlers above taking precedence). The webmail is a
 	// React+Vite SPA built into ./webmail/dist (run `cd webmail && npm run build`).
 	if dir := env("VULOS_WEBMAIL_DIR", "./webmail/dist"); dir != "" {
+		// The Mail product exposes Calendar and Contacts as standalone surfaces
+		// (mail.vulos.org/calendar and /contacts). They are rendered by the same
+		// single-page webmail bundle (App.jsx switches on the path), so these
+		// routes must serve the SPA's index.html rather than 404 in the plain
+		// FileServer. The client then mounts <Calendar/> / <Contacts/> against
+		// the same /v1 session the mailbox uses.
+		serveSPA := func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
+		}
+		httpMux.HandleFunc("/calendar", serveSPA)
+		httpMux.HandleFunc("/contacts", serveSPA)
 		httpMux.Handle("/", http.FileServer(http.Dir(dir)))
 	}
 

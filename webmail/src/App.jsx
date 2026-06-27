@@ -1,6 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MailApp } from "@vulos/mail-ui";
+import { MailApp, Calendar, Contacts } from "@vulos/mail-ui";
 import Login from "./components/Login.jsx";
+
+// Which Mail surface to render, derived from the URL path. The Mail product
+// exposes Calendar and Contacts as standalone surfaces (mail.vulos.org/calendar
+// and /contacts) in addition to the default mailbox. We match on the path
+// *suffix* so the same build works whether it is mounted at the origin root
+// (mail.vulos.org) or behind the OS app gateway (/app/lilmail/calendar), which
+// rewrites the base href but forwards the trailing /calendar|/contacts segment.
+function currentSurface() {
+  const path = window.location.pathname.replace(/\/+$/, "");
+  if (path.endsWith("/calendar")) return "calendar";
+  if (path.endsWith("/contacts")) return "contacts";
+  return "mail";
+}
 
 // Thin webmail shell: sign-in + mount of the shared @vulos/mail-ui <MailApp/>.
 //
@@ -44,9 +57,19 @@ export default function App() {
   // Avoid a flash of the login screen while probing the session.
   if (!ready) return null;
 
-  // No onSend override: the mail-ui sends via POST /v1/messages, which the server
-  // proxies to the lilmail engine (which submits over SMTP back to vulos-mail).
-  return authed
-    ? <MailApp baseUrl="/v1" onAuthError={onLogout} />
-    : <Login onLogin={() => setAuthed(true)} />;
+  if (!authed) return <Login onLogin={() => setAuthed(true)} />;
+
+  // All surfaces share the same /v1 → lilmail client/baseUrl and the same
+  // server-side session; only the rendered component differs. Calendar and
+  // Contacts hit the /v1 calendar/contacts (CalDAV/CardDAV) APIs.
+  switch (currentSurface()) {
+    case "calendar":
+      return <Calendar baseUrl="/v1" onAuthError={onLogout} />;
+    case "contacts":
+      return <Contacts baseUrl="/v1" onAuthError={onLogout} />;
+    default:
+      // No onSend override: the mail-ui sends via POST /v1/messages, which the
+      // server proxies to the lilmail engine (submits over SMTP back to vulos-mail).
+      return <MailApp baseUrl="/v1" onAuthError={onLogout} />;
+  }
 }
