@@ -9,8 +9,8 @@ import { shortDate } from './format.js'
  */
 export default function MessageList({
   threads = [], selectedId, focusId,
-  selection, onToggleSelect, onSelectAll,
-  onOpen, onToggleStar, onArchive, onDelete, onToggleRead, onRefresh,
+  selection, onToggleSelect, onSelectRange, onSelectAll,
+  onOpen, onToggleStar, onArchive, onDelete, onToggleRead, onRefresh, onCompose,
   loading, error, onRetry,
   query = '', onSearch, onClearSearch,
   canArchive = true, folder = 'INBOX', searchRef, onMenu,
@@ -18,6 +18,7 @@ export default function MessageList({
   const [q, setQ] = useState(query)
   const innerRef = useRef(null)
   const localSearch = useRef(null)
+  const lastIdx = useRef(null)
   useEffect(() => { setQ(query) }, [query])
 
   const selCount = selection ? selection.size : 0
@@ -29,6 +30,19 @@ export default function MessageList({
   }
 
   const stop = (fn) => (e) => { e.stopPropagation(); fn?.(e) }
+
+  // Checkbox click: shift-click extends a contiguous range from the last click.
+  function onCheck(e, idx, id) {
+    e.stopPropagation()
+    if (e.shiftKey && lastIdx.current != null && onSelectRange) {
+      const a = Math.min(lastIdx.current, idx)
+      const b = Math.max(lastIdx.current, idx)
+      onSelectRange(threads.slice(a, b + 1).map((t) => t.id))
+    } else {
+      onToggleSelect?.(id)
+    }
+    lastIdx.current = idx
+  }
 
   return (
     <section className="vm-list" aria-label="Messages">
@@ -122,10 +136,15 @@ export default function MessageList({
         <div className="vm-empty vm-state">
           <Icon name={query ? 'search' : 'inbox'} className="vm-empty-icon" />
           <p>{query ? 'No results' : emptyText(folder)}</p>
+          {!query && onCompose && (
+            <button type="button" className="vm-btn vm-btn-primary" onClick={onCompose}>
+              <Icon name="pencil" /> Compose
+            </button>
+          )}
         </div>
       ) : (
         <ul className="vm-rows" ref={innerRef}>
-          {threads.map((t) => {
+          {threads.map((t, idx) => {
             const selected = selection?.has(t.id)
             const sender = t.fromName || t.from || '(unknown)'
             return (
@@ -142,7 +161,7 @@ export default function MessageList({
                   tabIndex={0}
                   aria-label={`${sender}: ${t.subject || '(no subject)'}`}
                   onClick={() => onOpen?.(t)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') onOpen?.(t) }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen?.(t) } }}
                 >
                   <button
                     type="button"
@@ -150,7 +169,7 @@ export default function MessageList({
                     role="checkbox"
                     aria-checked={selected ? 'true' : 'false'}
                     aria-label={selected ? 'Deselect' : 'Select'}
-                    onClick={stop(() => onToggleSelect?.(t.id))}
+                    onClick={(e) => onCheck(e, idx, t.id)}
                   >
                     <Icon name="check" />
                   </button>

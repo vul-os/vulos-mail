@@ -37,12 +37,14 @@ function fmtTime(iso) {
  * @param {string} [props.baseUrl='/v1']
  * @param {object} [props.client]        - pre-built client (overrides baseUrl)
  * @param {(err) => void} [props.onAuthError]
+ * @param {'month'|'agenda'} [props.defaultView='month'] - initial view (the
+ *   narrow side panel defaults to 'agenda' where a month grid is cramped).
  */
-export default function Calendar({ baseUrl = '/v1', client: clientProp, onAuthError }) {
+export default function Calendar({ baseUrl = '/v1', client: clientProp, onAuthError, defaultView = 'month' }) {
   const client = useMemo(() => clientProp ?? createMailClient({ baseUrl }), [clientProp, baseUrl])
 
   const [anchor, setAnchor] = useState(() => new Date())
-  const [view, setView] = useState('month') // 'month' | 'agenda'
+  const [view, setView] = useState(defaultView) // 'month' | 'agenda'
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')

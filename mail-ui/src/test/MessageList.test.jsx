@@ -39,6 +39,40 @@ describe('<MessageList/>', () => {
     expect(onOpen).toHaveBeenCalledWith(threads[0])
   })
 
+  it('opens a thread on Enter and Space (keyboard activation)', () => {
+    const onOpen = vi.fn()
+    const { container } = render(<MessageList threads={threads} selection={noSel} onOpen={onOpen} />)
+    const row = container.querySelector('.vm-row')
+    fireEvent.keyDown(row, { key: 'Enter' })
+    fireEvent.keyDown(row, { key: ' ' })
+    expect(onOpen).toHaveBeenCalledTimes(2)
+    expect(onOpen).toHaveBeenCalledWith(threads[0])
+  })
+
+  it('shift-clicking a checkbox selects a contiguous range', () => {
+    const onToggleSelect = vi.fn()
+    const onSelectRange = vi.fn()
+    render(<MessageList threads={threads} selection={noSel} onToggleSelect={onToggleSelect} onSelectRange={onSelectRange} />)
+    const checks = screen.getAllByLabelText('Select')
+    fireEvent.click(checks[0])                          // anchor
+    fireEvent.click(checks[1], { shiftKey: true })      // extend
+    expect(onToggleSelect).toHaveBeenCalledWith('1')
+    expect(onSelectRange).toHaveBeenCalledWith(['1', '2'])
+  })
+
+  it('offers a Compose CTA on inbox-zero (non-search empty state)', () => {
+    const onCompose = vi.fn()
+    render(<MessageList threads={[]} selection={noSel} folder="INBOX" onCompose={onCompose} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Compose' }))
+    expect(onCompose).toHaveBeenCalled()
+  })
+
+  it('hides the Compose CTA on a no-results search', () => {
+    render(<MessageList threads={[]} selection={noSel} folder="INBOX" query="zzz" onCompose={() => {}} />)
+    expect(screen.getByText('No results')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Compose' })).not.toBeInTheDocument()
+  })
+
   it('toggles selection via the row checkbox', () => {
     const onToggleSelect = vi.fn()
     render(<MessageList threads={threads} selection={noSel} onToggleSelect={onToggleSelect} />)

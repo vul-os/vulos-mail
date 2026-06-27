@@ -36,6 +36,7 @@ const LABEL_FOR = {
 export default function FolderList({
   folders = [], current, onSelect, onCompose, me,
   collapsed = false, onToggleCollapse, starredCount = 0,
+  onOpenPanel, onOpenHelp,
 }) {
   // Bucket real folders by kind, keep first match per special kind.
   const specials = {}
@@ -105,6 +106,40 @@ export default function FolderList({
         )}
         {labels.map(renderItem)}
       </ul>
+
+      {/* Mobile-only: Calendar / Contacts / Settings / Shortcuts otherwise live
+          in the far-right rail, which is hidden ≤768px. */}
+      {(onOpenPanel || onOpenHelp) && (
+        <ul className="vm-folders vm-drawer-extra" aria-label="Tools">
+          <li className="vm-folder-section" aria-hidden="true"><span>More</span></li>
+          {onOpenPanel && (
+            <>
+              <li>
+                <button type="button" className="vm-folder" onClick={() => onOpenPanel('calendar')} title="Calendar">
+                  <Icon name="calendar" className="vm-icon" /><span className="vm-folder-name">Calendar</span>
+                </button>
+              </li>
+              <li>
+                <button type="button" className="vm-folder" onClick={() => onOpenPanel('contacts')} title="Contacts">
+                  <Icon name="users" className="vm-icon" /><span className="vm-folder-name">Contacts</span>
+                </button>
+              </li>
+              <li>
+                <button type="button" className="vm-folder" onClick={() => onOpenPanel('settings')} title="Settings">
+                  <Icon name="settings" className="vm-icon" /><span className="vm-folder-name">Settings</span>
+                </button>
+              </li>
+            </>
+          )}
+          {onOpenHelp && (
+            <li>
+              <button type="button" className="vm-folder" onClick={onOpenHelp} title="Keyboard shortcuts">
+                <Icon name="keyboard" className="vm-icon" /><span className="vm-folder-name">Shortcuts</span>
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
 
       {me?.email && (
         <div className="vm-sidebar-foot" title={me.email}>

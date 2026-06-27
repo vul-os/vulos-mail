@@ -24,6 +24,7 @@ export default function Compose({
 
   const bodyRef = useRef(null)
   const toRef = useRef(null)
+  const dockRef = useRef(null)
   const saveTimer = useRef(null)
   const dirty = useRef(false)
 
@@ -79,6 +80,35 @@ export default function Compose({
     }
   }
 
+  // Discarding deletes the draft. No /v1 draft-delete endpoint exists yet, so we
+  // confirm before throwing away a draft that has content / has been auto-saved.
+  function discard() {
+    if ((savedAt || dirty.current) && !window.confirm('Discard this draft?')) return
+    onClose?.()
+  }
+
+  // Esc closes this compose; Tab is trapped within the dialog when maximised.
+  function onDockKeyDown(e) {
+    if (e.key === 'Escape') {
+      // Stop the app-wide keyboard handler (window listener) from also acting,
+      // so Esc only closes *this* focused compose.
+      e.nativeEvent?.stopImmediatePropagation?.()
+      e.stopPropagation()
+      onClose?.()
+      return
+    }
+    if (e.key !== 'Tab' || !maximised || !dockRef.current) return
+    const focusable = dockRef.current.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), textarea, [contenteditable="true"], [tabindex]:not([tabindex="-1"])',
+    )
+    const list = Array.from(focusable).filter((el) => el.offsetParent !== null || el === document.activeElement)
+    if (!list.length) return
+    const first = list[0]
+    const last = list[list.length - 1]
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+  }
+
   const exec = (cmd, val) => {
     bodyRef.current?.focus()
     try { document.execCommand(cmd, false, val) } catch { /* unsupported in test env */ }
@@ -92,19 +122,21 @@ export default function Compose({
   if (minimised) {
     return (
       <div className="vm-compose-dock vm-min">
-        <button type="button" className="vm-compose-bar" onClick={() => setMinimised(false)}>
-          <span className="vm-compose-title">{subject || 'New message'}</span>
+        <div className="vm-compose-bar">
+          <button type="button" className="vm-compose-bar-title" onClick={() => setMinimised(false)}>
+            <span className="vm-compose-title">{subject || 'New message'}</span>
+          </button>
           <span className="vm-compose-bar-actions">
-            <Icon name="chevup" onClick={(e) => { e.stopPropagation(); setMinimised(false) }} />
-            <Icon name="close" onClick={(e) => { e.stopPropagation(); onClose?.() }} />
+            <button type="button" className="vm-iconbtn vm-sm" aria-label="Restore" title="Restore" onClick={() => setMinimised(false)}><Icon name="chevup" /></button>
+            <button type="button" className="vm-iconbtn vm-sm" aria-label="Close" title="Close" onClick={() => onClose?.()}><Icon name="close" /></button>
           </span>
-        </button>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className={'vm-compose-dock' + (maximised ? ' vm-max' : '')} role="dialog" aria-modal={maximised ? 'true' : undefined} aria-label="Compose message">
+    <div ref={dockRef} className={'vm-compose-dock' + (maximised ? ' vm-max' : '')} role="dialog" aria-modal={maximised ? 'true' : undefined} aria-label="Compose message" onKeyDown={onDockKeyDown}>
       <div className="vm-compose">
         <header className="vm-compose-head">
           <span className="vm-compose-title">{subject || 'New message'}</span>
@@ -119,7 +151,8 @@ export default function Compose({
 
         <div className="vm-compose-body">
           <RecipientField label="To" value={to} setValue={setTo} inputRef={toRef} onContactSearch={onContactSearch} onChange={scheduleSave}>
-            {!showCc && <button type="button" className="vm-cc-toggle" onClick={() => setShowCc(true)}>Cc Bcc</button>}
+            <button type="button" className="vm-cc-toggle" aria-expanded={showCc}
+              onClick={() => setShowCc((v) => !v)}>{showCc ? 'Hide' : 'Cc Bcc'}</button>
           </RecipientField>
           {showCc && (
             <>
@@ -162,7 +195,7 @@ export default function Compose({
           <button type="button" className="vm-iconbtn vm-sm vm-attach-btn" aria-label="Attach files (coming soon)"
             title="Attachments are not yet available over /v1" disabled><Icon name="attach" /></button>
           {savedAt && <span className="vm-note">Saved {savedAt}</span>}
-          <button type="button" className="vm-iconbtn vm-sm vm-danger" aria-label="Discard draft" title="Discard" onClick={onClose}><Icon name="trash" /></button>
+          <button type="button" className="vm-iconbtn vm-sm vm-danger" aria-label="Discard draft" title="Discard" onClick={discard}><Icon name="trash" /></button>
         </footer>
       </div>
     </div>

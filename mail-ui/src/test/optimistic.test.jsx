@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import MailApp from '../components/MailApp.jsx'
 import { FLAG_FLAGGED } from '../api.js'
 
@@ -42,17 +42,47 @@ describe('MailApp optimistic actions', () => {
     expect(add).toBe(true)
   })
 
-  it('removes a conversation from the list on delete (optimistic) and calls deleteMessage', async () => {
-    const client = makeClient()
-    render(<MailApp client={client} />)
-    await screen.findByText('First')
+  it('removes a conversation optimistically and commits deleteMessage after the undo window', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const client = makeClient()
+      render(<MailApp client={client} />)
+      await screen.findByText('First')
 
-    const del = screen.getAllByLabelText('Delete')[0]
-    fireEvent.click(del)
+      fireEvent.click(screen.getAllByLabelText('Delete')[0])
 
-    await waitFor(() => expect(screen.queryByText('First')).not.toBeInTheDocument())
-    expect(client.deleteMessage).toHaveBeenCalledWith('m1', expect.objectContaining({ folder: 'INBOX' }))
-    // The other conversation remains.
-    expect(screen.getByText('Second')).toBeInTheDocument()
+      // Optimistic: row gone immediately; the other conversation remains.
+      await waitFor(() => expect(screen.queryByText('First')).not.toBeInTheDocument())
+      expect(screen.getByText('Second')).toBeInTheDocument()
+      // Deferred: the server call has NOT fired yet (undo still possible).
+      expect(client.deleteMessage).not.toHaveBeenCalled()
+
+      // After the undo window lapses, the delete commits.
+      await act(async () => { vi.advanceTimersByTime(7000) })
+      expect(client.deleteMessage).toHaveBeenCalledWith('m1', expect.objectContaining({ folder: 'INBOX' }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('Undo restores a deleted conversation and never hits the server', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const client = makeClient()
+      render(<MailApp client={client} />)
+      await screen.findByText('First')
+
+      fireEvent.click(screen.getAllByLabelText('Delete')[0])
+      await waitFor(() => expect(screen.queryByText('First')).not.toBeInTheDocument())
+
+      // Undo before the window lapses re-fetches (server untouched) → restored.
+      fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+      await screen.findByText('First')
+
+      await act(async () => { vi.advanceTimersByTime(7000) })
+      expect(client.deleteMessage).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

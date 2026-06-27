@@ -40,6 +40,13 @@ function isEditable(t) {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable
 }
 
+/** True for native/ARIA interactive controls that handle their own activation. */
+function isInteractive(t) {
+  if (!t) return false
+  const tag = t.tagName
+  return tag === 'BUTTON' || tag === 'A' || tag === 'SUMMARY' || t.getAttribute?.('role') === 'button'
+}
+
 /**
  * Wire keyboard shortcuts.
  * @param {Record<string, () => void>} handlers - action → callback
@@ -54,6 +61,9 @@ export function useKeyboard(handlers, enabled = true) {
       if (!action) return
       // In editable fields, only Escape is honoured (e.g. close compose/help).
       if (editing && action !== 'escape') return
+      // "open" (Enter / o) on a focused control would double-fire alongside the
+      // control's own activation — let the button/link/row handle it itself.
+      if (action === 'open' && isInteractive(e.target)) return
       const fn = handlers[action]
       if (fn) {
         // "/" and "?" would otherwise type into a just-focused search box.

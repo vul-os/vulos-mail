@@ -27,6 +27,18 @@
 .vm-app svg { display: block; }
 .vm-icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 
+/* Tokenized keyboard focus ring (visible on keyboard nav only). */
+.vm-app :focus-visible,
+.vm-overlay :focus-visible,
+.vm-compose-dock :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+/* Thin tokenized scrollbar for the near-black canvas. */
+.vm-app *, .vm-overlay *, .vm-compose-dock * { scrollbar-width: thin; scrollbar-color: var(--border-emphasis) transparent; }
+.vm-app ::-webkit-scrollbar, .vm-overlay ::-webkit-scrollbar, .vm-compose-dock ::-webkit-scrollbar { width: 10px; height: 10px; }
+.vm-app ::-webkit-scrollbar-track, .vm-overlay ::-webkit-scrollbar-track, .vm-compose-dock ::-webkit-scrollbar-track { background: transparent; }
+.vm-app ::-webkit-scrollbar-thumb, .vm-overlay ::-webkit-scrollbar-thumb, .vm-compose-dock ::-webkit-scrollbar-thumb { background: var(--border-emphasis); border-radius: var(--radius-pill); border: 2px solid transparent; background-clip: padding-box; }
+.vm-app ::-webkit-scrollbar-thumb:hover, .vm-overlay ::-webkit-scrollbar-thumb:hover, .vm-compose-dock ::-webkit-scrollbar-thumb:hover { background: var(--text-ghost); background-clip: padding-box; }
+
 .vm-iconbtn {
   display: grid; place-items: center;
   width: 34px; height: 34px; flex: none;
@@ -105,6 +117,11 @@
 .vm-folder-section { padding: 14px 12px 4px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-faint); }
 .vm-collapsed .vm-folder-section { display: none; }
 
+/* Mobile-only drawer extras (Calendar / Contacts / Settings / Shortcuts) — on
+   desktop these live in the far-right rail (hidden ≤768px), so surface them
+   inside the hamburger drawer for mobile reachability. */
+.vm-drawer-extra { display: none; flex: none; border-top: 1px solid var(--border-subtle); margin-top: var(--sp-1); padding-top: var(--sp-1); overflow: visible; }
+
 .vm-sidebar-foot { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-1); border-top: 1px solid var(--border-subtle); min-width: 0; }
 .vm-me-avatar { width: 28px; height: 28px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 600; color: var(--on-accent); background: var(--accent); }
 .vm-me { flex: 1; min-width: 0; font-size: 11.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -131,6 +148,12 @@
 .vm-app[data-rp="off"][data-open="1"] .vm-list { display: none; }
 .vm-app[data-rp="off"] .vm-list { width: auto; flex: 1; border-right: 0; }
 
+/* When a side panel AND a thread are both open, the list + panel would squeeze
+   the reading pane (header collides). Collapse to a single reading pane (mirror
+   the mobile single-pane rule) and surface Back so the list stays reachable. */
+.vm-app[data-rp="right"][data-panel-open="1"][data-open="1"] .vm-list { display: none; }
+.vm-app[data-rp="right"][data-panel-open="1"][data-open="1"] .vm-back { display: grid; }
+
 /* ── List: top bar + search ───────────────────────────────────────────────── */
 .vm-topbar { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--border-subtle); }
 .vm-menu-btn { display: none; }
@@ -146,6 +169,8 @@
 .vm-search .vm-icon { width: 16px; height: 16px; color: var(--text-faint); }
 .vm-search input { flex: 1; min-width: 0; background: none; border: 0; outline: none; font-size: 13px; }
 .vm-search input::placeholder { color: var(--text-faint); }
+/* Suppress the native WebKit clear "✕" — we render our own .vm-search-clear. */
+.vm-search input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; display: none; }
 .vm-search-clear { display: grid; place-items: center; color: var(--text-faint); }
 .vm-search-clear:hover { color: var(--text-primary); }
 .vm-search-clear .vm-icon { width: 14px; height: 14px; }
@@ -187,6 +212,8 @@
 .vm-row.vm-selected { background: var(--accent-soft); }
 .vm-row.vm-focus { box-shadow: inset 0 0 0 1.5px var(--accent); }
 .vm-row.vm-unread::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent); }
+/* Avoid stacking the unread bar with the active row's inset accent shadow. */
+.vm-row.vm-active.vm-unread::before { display: none; }
 .vm-row.vm-unread .vm-row-from, .vm-row.vm-unread .vm-row-subj { color: var(--text-primary); font-weight: 700; }
 .vm-row.vm-unread .vm-row-date { color: var(--text-secondary); font-weight: 600; }
 
@@ -257,9 +284,9 @@
 .vm-msg-head { display: flex; align-items: center; gap: var(--sp-3); padding: 14px 18px; }
 .vm-msg:not(.vm-collapsed) .vm-msg-head { border-bottom: 1px solid var(--border-subtle); }
 .vm-msg-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.vm-msg-fromline { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
-.vm-msg-from { font-weight: 600; font-size: 14px; color: var(--text-primary); }
-.vm-msg-addr { font-size: 11.5px; color: var(--text-muted); }
+.vm-msg-fromline { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; min-width: 0; }
+.vm-msg-from { font-weight: 600; font-size: 14px; color: var(--text-primary); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vm-msg-addr { font-size: 11.5px; color: var(--text-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vm-msg-to { font-size: 11.5px; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vm-msg-collapsed-snip { font-size: 12.5px; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vm-collapsed.vm-unread .vm-msg-from { font-weight: 700; }
@@ -321,9 +348,8 @@
 .vm-compose-dock.vm-max .vm-compose-head { border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
 .vm-compose-title { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vm-compose-bar-actions { display: flex; align-items: center; gap: 1px; flex: none; }
-.vm-compose-bar { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 12px 14px; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius-lg) var(--radius-lg) 0 0; box-shadow: var(--shadow-pop); }
-.vm-compose-bar .vm-compose-bar-actions .vm-icon { width: 16px; height: 16px; padding: 6px; box-sizing: content-box; color: var(--text-tertiary); border-radius: var(--radius-sm); }
-.vm-compose-bar .vm-compose-bar-actions .vm-icon:hover { background: var(--bg-hover); color: var(--text-primary); }
+.vm-compose-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); width: 100%; padding: 8px 8px 8px 14px; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius-lg) var(--radius-lg) 0 0; box-shadow: var(--shadow-pop); }
+.vm-compose-bar-title { flex: 1; min-width: 0; display: flex; align-items: center; text-align: left; padding: 6px 0; }
 .vm-compose-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; }
 .vm-crow { display: flex; align-items: center; gap: var(--sp-2); padding: 2px 16px; border-bottom: 1px solid var(--border-subtle); }
 .vm-crow-label { width: 34px; flex: none; font-size: 12px; color: var(--text-faint); }
@@ -365,9 +391,11 @@
 
 /* ── Toasts ───────────────────────────────────────────────────────────────── */
 .vm-toasts { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 110; display: flex; flex-direction: column; gap: var(--sp-2); align-items: center; pointer-events: none; }
-.vm-toast { padding: 10px 18px; border-radius: var(--radius); background: var(--bg-elevated); border: 1px solid var(--border-strong); box-shadow: var(--shadow-2); font-size: 12.5px; color: var(--text-primary); animation: vm-rise .2s var(--ease); }
+.vm-toast { display: flex; align-items: center; gap: var(--sp-3); padding: 10px 12px 10px 18px; border-radius: var(--radius); background: var(--bg-elevated); border: 1px solid var(--border-strong); box-shadow: var(--shadow-2); font-size: 12.5px; color: var(--text-primary); animation: vm-rise .2s var(--ease); pointer-events: auto; }
 .vm-toast-success { border-color: var(--success); }
 .vm-toast-error { border-color: var(--danger); color: var(--danger); }
+.vm-toast-action { flex: none; padding: 5px 12px; border-radius: var(--radius-sm); color: var(--accent); font-weight: 700; font-size: 12px; }
+.vm-toast-action:hover { background: var(--accent-soft); }
 @keyframes vm-rise { from { opacity: 0; transform: translateY(8px); } }
 
 /* ── Mobile drawer scrim ──────────────────────────────────────────────────── */
@@ -385,7 +413,7 @@
 .vm-cal-today { padding: 6px 12px; }
 .vm-cal-title { font-size: 16px; font-weight: 600; letter-spacing: -.02em; margin: 0 0 0 6px; }
 .vm-cal-views { display: flex; gap: 2px; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 3px; }
-.vm-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); grid-auto-rows: 1fr; flex: 1; min-height: 0; overflow: auto; }
+.vm-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); grid-auto-rows: 1fr; flex: 1; min-height: 0; overflow: auto; border-top: 1px solid var(--border-subtle); border-left: 1px solid var(--border-subtle); }
 .vm-cal-dow { padding: 8px 10px; font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--border-subtle); border-right: 1px solid var(--border-subtle); }
 .vm-cal-cell { min-height: 88px; padding: 6px 7px; border-bottom: 1px solid var(--border-subtle); border-right: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
 .vm-cal-cell.vm-muted { background: var(--bg-surface); }
@@ -403,7 +431,6 @@
 .vm-agenda-date { font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
 .vm-agenda-time { font-size: 11.5px; color: var(--text-faint); }
 .vm-agenda-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.vm-agenda-main::before { content: ""; }
 .vm-agenda-sum { font-size: 13px; color: var(--text-secondary); }
 .vm-agenda-loc { font-size: 11.5px; color: var(--text-faint); }
 
@@ -437,6 +464,7 @@
   .vm-app[data-drawer="1"] .vm-scrim { display: block; }
   .vm-rightrail { display: none; }
   .vm-panel { right: 0; width: 100%; }
+  .vm-drawer-extra { display: flex; }
 
   .vm-main { flex-direction: column; }
   .vm-list { width: auto; flex: 1; border-right: 0; }

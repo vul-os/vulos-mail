@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createMailClient } from '../api.js'
 import Icon from './Icon.jsx'
+import { avatarStyle } from './avatar.js'
 import '../index.css'
 
 const initial = (name = '', email = '') => {
@@ -86,7 +87,7 @@ export default function Contacts({ baseUrl = '/v1', client: clientProp, onSelect
                 onClick={() => onSelect?.(ct)}
                 disabled={!onSelect}
               >
-                <span className="vm-avatar" aria-hidden="true">{initial(ct.name, ct.email)}</span>
+                <span className="vm-avatar" style={avatarStyle(ct.email || ct.name)} aria-hidden="true">{initial(ct.name, ct.email)}</span>
                 <span className="vm-contact-main">
                   <span className="vm-contact-name">{ct.name || ct.email}</span>
                   {ct.name && <span className="vm-contact-email">{ct.email}</span>}

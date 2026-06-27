@@ -17,6 +17,9 @@ import '../index.css'
 
 let composeSeq = 0
 
+// How long an undoable destructive action can be reversed before it commits.
+const UNDO_MS = 6000
+
 /**
  * <MailApp/> — full Gmail-class webmail, wired to the lilmail /v1 API.
  *
@@ -58,6 +61,10 @@ export default function MailApp({ baseUrl = '/v1', client: clientProp, onSend, o
   // Apply theme to the app root.
   const rootRef = useRef(null)
 
+  // Pending deferred-commit timers for undoable (destructive) actions.
+  const undoTimers = useRef(new Map())
+  useEffect(() => () => { for (const t of undoTimers.current.values()) clearTimeout(t) }, [])
+
   const handleError = useCallback((e) => {
     if (e?.status === 401) onAuthError?.(e)
     return e?.message || 'Something went wrong'
@@ -67,6 +74,28 @@ export default function MailApp({ baseUrl = '/v1', client: clientProp, onSend, o
     const id = ++composeSeq
     setToasts((t) => [...t, { id, text, kind }])
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3200)
+  }, [])
+
+  // An undoable toast: `commit` runs when the undo window lapses; `undo` runs if
+  // the user clicks Undo first (the destructive server call is deferred until
+  // commit, so undoing is a clean re-fetch — nothing was sent to the server).
+  const undoable = useCallback((text, commit, undo) => {
+    const id = ++composeSeq
+    const timer = setTimeout(() => {
+      undoTimers.current.delete(id)
+      setToasts((t) => t.filter((x) => x.id !== id))
+      commit()
+    }, UNDO_MS)
+    undoTimers.current.set(id, timer)
+    setToasts((t) => [...t, {
+      id, text, kind: 'info',
+      undo: () => {
+        clearTimeout(timer)
+        undoTimers.current.delete(id)
+        setToasts((tt) => tt.filter((x) => x.id !== id))
+        undo()
+      },
+    }])
   }, [])
 
   // ── Bootstrap ───────────────────────────────────────────────────────────
@@ -207,41 +236,52 @@ export default function MailApp({ baseUrl = '/v1', client: clientProp, onSend, o
   // ── Delete (to Trash) ──────────────────────────────────────────────────────
   const deleteThreads = useCallback((thread) => {
     const targets = targetsOf(thread)
+    if (!targets.length) return
     const ids = targets.flatMap((t) => t.messages.map((m) => m.id))
+    const src = starredFolderSrc(folder)
     removeIds(ids)
     if (openThread && targets.some((t) => t.id === openThread.id)) { setOpenThread(null); setMobilePane('list') }
     setSelection(new Set())
-    for (const id of ids) {
-      client.deleteMessage(id, { folder: starredFolderSrc(folder) }).catch((e) => { handleError(e); loadList() })
-    }
-    toast(`Deleted ${targets.length > 1 ? targets.length + ' conversations' : 'conversation'}`)
-  }, [targetsOf, removeIds, openThread, client, folder, handleError, loadList, toast])
+    undoable(
+      `Deleted ${targets.length > 1 ? targets.length + ' conversations' : 'conversation'}`,
+      () => { for (const id of ids) client.deleteMessage(id, { folder: src }).catch((e) => { handleError(e); loadList() }) },
+      () => loadList(),
+    )
+  }, [targetsOf, removeIds, openThread, client, folder, handleError, loadList, undoable])
 
   // ── Archive (move to Archive) ──────────────────────────────────────────────
   const archiveThreads = useCallback((thread) => {
     if (!canArchive) return
     const targets = targetsOf(thread)
+    if (!targets.length) return
     const ids = targets.flatMap((t) => t.messages.map((m) => m.id))
+    const src = starredFolderSrc(folder)
     removeIds(ids)
     if (openThread && targets.some((t) => t.id === openThread.id)) { setOpenThread(null); setMobilePane('list') }
     setSelection(new Set())
-    Promise.all(ids.map((id) =>
-      client.moveMessage(id, archiveFolder, { folder: starredFolderSrc(folder) }),
-    )).catch((e) => {
-      if (e instanceof ApiError && (e.status === 404 || e.status === 405)) {
-        setMoveSupported(false)
-        toast('Archive is not available on this server', 'error')
-      } else {
-        handleError(e)
-      }
-      loadList()
-    })
-    if (moveSupported) toast(`Archived ${targets.length > 1 ? targets.length + ' conversations' : 'conversation'}`)
-  }, [canArchive, targetsOf, removeIds, openThread, client, archiveFolder, folder, moveSupported, handleError, loadList, toast])
+    undoable(
+      `Archived ${targets.length > 1 ? targets.length + ' conversations' : 'conversation'}`,
+      () => {
+        Promise.all(ids.map((id) => client.moveMessage(id, archiveFolder, { folder: src }))).catch((e) => {
+          if (e instanceof ApiError && (e.status === 404 || e.status === 405)) {
+            setMoveSupported(false)
+            toast('Archive is not available on this server', 'error')
+          } else {
+            handleError(e)
+          }
+          loadList()
+        })
+      },
+      () => loadList(),
+    )
+  }, [canArchive, targetsOf, removeIds, openThread, client, archiveFolder, folder, handleError, loadList, toast, undoable])
 
   // ── Selection ──────────────────────────────────────────────────────────────
   const toggleSelect = useCallback((id) => {
     setSelection((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }, [])
+  const selectRange = useCallback((ids) => {
+    setSelection((s) => { const n = new Set(s); for (const id of ids) n.add(id); return n })
   }, [])
   const selectAll = useCallback((on) => {
     setSelection(on ? new Set(threads.map((t) => t.id)) : new Set())
@@ -302,8 +342,13 @@ export default function MailApp({ baseUrl = '/v1', client: clientProp, onSend, o
     compose: () => openCompose(),
     search: () => searchRef.current?.focus(),
     help: () => setHelpOpen(true),
-    escape: () => { if (helpOpen) setHelpOpen(false); else if (panel !== 'none') setPanel('none'); else if (openThread) { setOpenThread(null); setMobilePane('list') } },
-  }), [threads, focusIdx, openThread, fullById, moveFocus, openThreadFn, archiveThreads, deleteThreads, toggleStar, toggleSelect, replyTo, openCompose, helpOpen, panel])
+    escape: () => {
+      if (helpOpen) setHelpOpen(false)
+      else if (composes.length) closeCompose(composes[composes.length - 1].id)
+      else if (panel !== 'none') setPanel('none')
+      else if (openThread) { setOpenThread(null); setMobilePane('list') }
+    },
+  }), [threads, focusIdx, openThread, fullById, moveFocus, openThreadFn, archiveThreads, deleteThreads, toggleStar, toggleSelect, replyTo, openCompose, helpOpen, panel, composes, closeCompose])
 
   useKeyboard(kbHandlers, settings.shortcuts)
 
@@ -319,6 +364,7 @@ export default function MailApp({ baseUrl = '/v1', client: clientProp, onSend, o
       data-open={openThread ? '1' : '0'}
       data-pane={mobilePane}
       data-drawer={drawerOpen ? '1' : '0'}
+      data-panel-open={panel !== 'none' ? '1' : '0'}
     >
       {drawerOpen && <div className="vm-scrim" onClick={() => setDrawerOpen(false)} aria-hidden="true" />}
 
@@ -331,6 +377,8 @@ export default function MailApp({ baseUrl = '/v1', client: clientProp, onSend, o
         onToggleCollapse={() => setRailCollapsed((v) => !v)}
         onSelect={selectFolder}
         onCompose={() => openCompose()}
+        onOpenPanel={(name) => { setPanel(name); setDrawerOpen(false) }}
+        onOpenHelp={() => { setHelpOpen(true); setDrawerOpen(false) }}
       />
 
       <div className="vm-main">
@@ -340,8 +388,10 @@ export default function MailApp({ baseUrl = '/v1', client: clientProp, onSend, o
           focusId={threads[focusIdx]?.id ?? null}
           selection={selection}
           onToggleSelect={toggleSelect}
+          onSelectRange={selectRange}
           onSelectAll={selectAll}
           onOpen={openThreadFn}
+          onCompose={() => openCompose()}
           onToggleStar={toggleStar}
           onArchive={archiveThreads}
           onDelete={deleteThreads}
@@ -389,7 +439,7 @@ export default function MailApp({ baseUrl = '/v1', client: clientProp, onSend, o
           {panel === 'calendar' && (
             <div className="vm-panel-embed">
               <div className="vm-panel-head"><h2><Icon name="calendar" className="vm-icon" /> Calendar</h2><button type="button" className="vm-iconbtn" aria-label="Close" onClick={() => setPanel('none')}><Icon name="close" /></button></div>
-              <Calendar client={client} onAuthError={onAuthError} />
+              <Calendar client={client} defaultView="agenda" onAuthError={onAuthError} />
             </div>
           )}
           {panel === 'contacts' && (
@@ -423,7 +473,10 @@ export default function MailApp({ baseUrl = '/v1', client: clientProp, onSend, o
 
       <div className="vm-toasts" aria-live="polite">
         {toasts.map((t) => (
-          <div key={t.id} className={'vm-toast vm-toast-' + t.kind}>{t.text}</div>
+          <div key={t.id} className={'vm-toast vm-toast-' + t.kind}>
+            <span className="vm-toast-text">{t.text}</span>
+            {t.undo && <button type="button" className="vm-toast-action" onClick={t.undo}>Undo</button>}
+          </div>
         ))}
       </div>
     </div>

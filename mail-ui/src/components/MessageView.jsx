@@ -75,6 +75,8 @@ export default function MessageView({
         <span className="vm-spacer" />
         <button type="button" className="vm-iconbtn" aria-label="Reply" title="Reply"
           onClick={() => onReply?.(thread.latest)}><Icon name="reply" /></button>
+        <button type="button" className="vm-iconbtn" aria-label="Reply all" title="Reply all"
+          onClick={() => onReplyAll?.(thread.latest)}><Icon name="replyall" /></button>
         <button type="button" className="vm-iconbtn" aria-label="Forward" title="Forward"
           onClick={() => onForward?.(thread.latest)}><Icon name="forward" /></button>
       </div>

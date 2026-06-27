@@ -114,6 +114,16 @@ async function main() {
     await shot(page, 'thread', 'Conversation view (collapsible thread, latest expanded)')
     await shot(page, 'hero', 'Hero — open conversation in the three-pane view')
 
+    // ── Side panel open alongside an open thread: the list collapses so the
+    //    reading pane keeps a usable width (no header overlap).
+    console.log('Capturing: panel + thread')
+    await page.getByRole('button', { name: 'Calendar' }).click()
+    await page.waitForSelector('.vm-panel', { timeout: 5000 })
+    await settle()
+    await shot(page, 'panel-thread', 'Side panel + open conversation (list collapses, reading pane keeps width)')
+    await page.getByRole('button', { name: 'Calendar' }).click() // close panel
+    await settle(200)
+
     // ── Search: query + results + active-query chip.
     console.log('Capturing: search')
     const search = page.getByLabel('Search mail')
@@ -138,12 +148,17 @@ async function main() {
     await page.keyboard.type('ali')
     await settle(500)
     await shot(page, 'compose', 'Docked compose with contact autocomplete + rich text')
-    await page.getByLabel('Close').first().click().catch(() => {})
+    // Esc closes the focused compose (also dismisses the autocomplete).
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('.vm-compose', { state: 'detached', timeout: 5000 }).catch(() => {})
     await settle(200)
 
     // ── Calendar side panel.
     console.log('Capturing: calendar')
     await page.getByRole('button', { name: 'Calendar' }).click()
+    await page.waitForSelector('.vm-cal', { timeout: 5000 })
+    // The narrow side panel defaults to Agenda; switch to Month for the grid shot.
+    await page.getByRole('tab', { name: 'Month' }).click()
     await page.waitForSelector('.vm-cal-grid', { timeout: 5000 })
     await settle()
     await shot(page, 'calendar', 'Calendar month view (side panel)')
@@ -171,6 +186,13 @@ async function main() {
     await page.waitForSelector('.vm-row', { timeout: 5000 })
     await settle()
     await shot(page, 'mobile', 'Mobile single-pane inbox (≤768px flow)')
+
+    // ── Mobile drawer: Calendar / Contacts / Settings / Shortcuts now reachable.
+    console.log('Capturing: mobile drawer')
+    await page.getByRole('button', { name: 'Menu', exact: true }).click()
+    await page.waitForSelector('.vm-drawer-extra', { timeout: 5000 })
+    await settle()
+    await shot(page, 'mobile-drawer', 'Mobile drawer with Calendar/Contacts/Settings/Shortcuts')
   } finally {
     await browser.close()
     if (httpServer) httpServer.close()
