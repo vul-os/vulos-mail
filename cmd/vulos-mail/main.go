@@ -537,7 +537,10 @@ func main() {
 		if perr != nil {
 			log.Fatalf("LILMAIL_ENGINE_URL %q: %v", engineURL, perr)
 		}
-		brokerSecret := env("LILMAIL_BROKER_SECRET", "")
+		// TrimSpace to match lilmail's verifier, which trims its own configured
+		// secret (lilmail/handlers/jsonapi/broker.go) but compares the presented
+		// header value as-is — so any stray whitespace here would fail the gate.
+		brokerSecret := strings.TrimSpace(env("LILMAIL_BROKER_SECRET", ""))
 		if brokerSecret == "" {
 			log.Printf("WARNING: LILMAIL_ENGINE_URL set but LILMAIL_BROKER_SECRET empty — the engine will ignore brokered credentials and /v1 reads will 401")
 		}
@@ -556,19 +559,12 @@ func main() {
 				return
 			}
 			// Never forward the browser's cookies/auth, and never let a client
-			// spoof the broker headers — set them fresh from the validated session.
+			// spoof the broker headers — strip the full inbound credential set
+			// (incl. the broker gate and the CalDAV/CardDAV base URLs) and then
+			// set them fresh from the validated session.
 			r.Header.Del("Cookie")
 			r.Header.Del("Authorization")
-			r.Header.Set("X-Vulos-Broker-Auth", brokerSecret)
-			r.Header.Set("X-Vulos-Mail-Provider", "imap")
-			r.Header.Set("X-Vulos-Mail-Email", sess.user)
-			r.Header.Set("X-Vulos-Mail-Username", sess.user)
-			r.Header.Set("X-Vulos-Mail-Auth", "plain")
-			r.Header.Set("X-Vulos-Mail-Secret", sess.pass)
-			r.Header.Set("X-Vulos-Mail-Imap-Host", imapHost)
-			r.Header.Set("X-Vulos-Mail-Imap-Port", imapPort)
-			r.Header.Set("X-Vulos-Mail-Smtp-Host", smtpHost)
-			r.Header.Set("X-Vulos-Mail-Smtp-Port", smtpPort)
+			injectBrokerHeaders(r.Header, brokerSecret, sess.user, sess.pass, imapHost, imapPort, smtpHost, smtpPort)
 			proxy.ServeHTTP(w, r)
 		})
 		log.Printf("webmail: proxying /v1 → lilmail engine %s (broker → imap %s:%s, smtp %s:%s)", engineURL, imapHost, imapPort, smtpHost, smtpPort)
@@ -791,6 +787,45 @@ func writeJSONErr(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// mailBrokerHeaders is the complete set of broker/credential headers the lilmail
+// engine honors. The /v1 reverse proxy strips every one of these from the inbound
+// request before injecting its own trusted values, so a session-holding client
+// can't forge any of them (notably X-Vulos-Mail-Caldav-Url / -Carddav-Url, which
+// lilmail would otherwise dial with the user's brokered credential — SSRF /
+// credential-exfil). Mirrors vulos-cloud's CP strip set (routes_mail.go).
+var mailBrokerHeaders = []string{
+	// Broker gate secret — must be stripped inbound so a client can't forge it.
+	"X-Vulos-Broker-Auth",
+	"X-Vulos-Mail-Provider", "X-Vulos-Mail-Email", "X-Vulos-Mail-Username",
+	"X-Vulos-Mail-Auth", "X-Vulos-Mail-Secret",
+	"X-Vulos-Mail-Imap-Host", "X-Vulos-Mail-Imap-Port",
+	"X-Vulos-Mail-Smtp-Host", "X-Vulos-Mail-Smtp-Port",
+	// CalDAV/CardDAV brokered base URLs. This proxy is IMAP-only, so these are
+	// stripped on the way in and never re-added.
+	"X-Vulos-Mail-Caldav-Url", "X-Vulos-Mail-Carddav-Url",
+}
+
+// injectBrokerHeaders strips the full inbound broker/credential header set from h
+// and then sets the trusted values for the validated IMAP session. Stripping
+// first (rather than relying on Set's overwrite) guarantees that headers this
+// proxy does not re-add — e.g. the CalDAV/CardDAV base URLs — cannot be smuggled
+// through to the lilmail engine.
+func injectBrokerHeaders(h http.Header, brokerSecret, user, pass, imapHost, imapPort, smtpHost, smtpPort string) {
+	for _, hdr := range mailBrokerHeaders {
+		h.Del(hdr)
+	}
+	h.Set("X-Vulos-Broker-Auth", brokerSecret)
+	h.Set("X-Vulos-Mail-Provider", "imap")
+	h.Set("X-Vulos-Mail-Email", user)
+	h.Set("X-Vulos-Mail-Username", user)
+	h.Set("X-Vulos-Mail-Auth", "plain")
+	h.Set("X-Vulos-Mail-Secret", pass)
+	h.Set("X-Vulos-Mail-Imap-Host", imapHost)
+	h.Set("X-Vulos-Mail-Imap-Port", imapPort)
+	h.Set("X-Vulos-Mail-Smtp-Host", smtpHost)
+	h.Set("X-Vulos-Mail-Smtp-Port", smtpPort)
 }
 
 // cookieValue returns the value of the named cookie, or "" when absent.
