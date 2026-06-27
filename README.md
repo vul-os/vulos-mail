@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="webmail/vulos-mail.png" alt="Vulos Mail" width="128" height="128" />
+<img src="webmail/public/vulos-mail.png" alt="Vulos Mail" width="128" height="128" />
 
 # Vulos Mail
 
@@ -14,7 +14,7 @@
 
 <br>
 
-<img src="mail-ui/docs/screenshots/hero.png" alt="Vulos Mail — the three-pane webmail open on a message" width="900">
+<img src="docs/screenshots/hero.png" alt="Vulos Mail — the three-pane webmail open on a message" width="900">
 
 </div>
 
@@ -83,12 +83,12 @@ code. vulos-mail runs standalone **and** is combined by Vulos Workspace.
 ## Screenshots
 
 The webmail mounts `@vulos/mail-ui`; its gallery is captured against a seeded
-**mock `/v1`** (no live backend). Regenerate with `cd mail-ui && npm run
-screenshots`; see [`mail-ui/docs/SCREENSHOTS.md`](mail-ui/docs/SCREENSHOTS.md).
+**mock `/v1`** (no live backend). Regenerate from the `@vulos/mail-ui` repo with
+`npm run screenshots`, then copy the gallery into `docs/screenshots/`.
 
 | Mail | Calendar | Contacts |
 |------|----------|----------|
-| [![Mail](mail-ui/docs/screenshots/mail.png)](mail-ui/docs/screenshots/mail.png) | [![Calendar](mail-ui/docs/screenshots/calendar.png)](mail-ui/docs/screenshots/calendar.png) | [![Contacts](mail-ui/docs/screenshots/contacts.png)](mail-ui/docs/screenshots/contacts.png) |
+| [![Mail](docs/screenshots/mail.png)](docs/screenshots/mail.png) | [![Calendar](docs/screenshots/calendar.png)](docs/screenshots/calendar.png) | [![Contacts](docs/screenshots/contacts.png)](docs/screenshots/contacts.png) |
 
 ## Quick start (standalone)
 
