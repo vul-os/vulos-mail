@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { MailApp, Calendar, Contacts } from "@vulos/mail-ui";
 import Login from "./components/Login.jsx";
 import AccountSettings from "./components/AccountSettings.jsx";
+import AppsAndBotsSurface from "./components/AppsAndBots.jsx";
 
 // Which Mail surface to render, derived from the URL path. The Mail product
 // exposes Calendar and Contacts as standalone surfaces (mail.vulos.org/calendar
@@ -13,6 +14,7 @@ function currentSurface() {
   const path = window.location.pathname.replace(/\/+$/, "");
   if (path.endsWith("/calendar")) return "calendar";
   if (path.endsWith("/contacts")) return "contacts";
+  if (path.endsWith("/apps")) return "apps";
   return "mail";
 }
 
@@ -68,6 +70,10 @@ export default function App() {
       return <Calendar baseUrl="/v1" onAuthError={onLogout} />;
     case "contacts":
       return <Contacts baseUrl="/v1" onAuthError={onLogout} />;
+    case "apps":
+      // Apps & Bots manage place (shared @vulos/apps-ui), session-cookie authed
+      // against the vulos-mail server's /api/apps appsplatform surface.
+      return <AppsAndBotsSurface />;
     default:
       // No onSend override: the mail-ui sends via POST /v1/messages, which the
       // server proxies to the lilmail engine (submits over SMTP back to vulos-mail).

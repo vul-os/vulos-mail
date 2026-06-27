@@ -1,6 +1,11 @@
 module github.com/vul-os/vulos-mail
 
-go 1.25
+go 1.25.0
+
+// The shared Vulos Apps & Bots platform is consumed from the sibling checkout so
+// the product/proxy can host an apps & bots place. The lilmail engine stays pure
+// (it never imports the platform); only this product binary does.
+replace github.com/vul-os/vulos-apps => ../vulos-apps
 
 require (
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
@@ -24,7 +29,8 @@ require (
 	github.com/klauspost/compress v1.18.6
 	github.com/minio/minio-go/v7 v7.0.91
 	github.com/prometheus/client_golang v1.23.2
-	modernc.org/sqlite v1.38.0
+	github.com/vul-os/vulos-apps v0.0.0-00010101000000-000000000000
+	modernc.org/sqlite v1.50.1
 )
 
 require (
@@ -46,17 +52,16 @@ require (
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/teambition/rrule-go v1.8.2 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
-	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
-	modernc.org/libc v1.65.10 // indirect
+	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
 
 require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/ncruces/go-strftime v0.1.9 // indirect
+	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
 	golang.org/x/text v0.32.0 // indirect
 )

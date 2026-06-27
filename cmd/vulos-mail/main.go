@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	appsplatform "github.com/vul-os/vulos-apps/appsplatform"
 	imapadapter "github.com/vul-os/vulos-mail/adapters/imap"
 	jmapadapter "github.com/vul-os/vulos-mail/adapters/jmap"
 	smtpin "github.com/vul-os/vulos-mail/adapters/smtp"
@@ -33,6 +34,7 @@ import (
 	cloud "github.com/vul-os/vulos-mail/integration/cloud"
 	"github.com/vul-os/vulos-mail/internal/abuse"
 	"github.com/vul-os/vulos-mail/internal/account"
+	mailapps "github.com/vul-os/vulos-mail/internal/apps"
 	"github.com/vul-os/vulos-mail/internal/authlimit"
 	"github.com/vul-os/vulos-mail/internal/blob"
 	"github.com/vul-os/vulos-mail/internal/compose"
@@ -452,6 +454,9 @@ func main() {
 	passwordChangeable := env("VULOS_CP_URL", "") == ""
 	signupEnabled := env("VULOS_SIGNUP", "") != "off"
 	engineConfigured := env("LILMAIL_ENGINE_URL", "") != ""
+	// appsEnabled is set once the Apps & Bots place mounts (below). Declared here
+	// so the account-capabilities surface and the /apps SPA deep-link can read it.
+	appsEnabled := false
 
 	// Calendar/Contacts standalone: the /v1 proxy strips any client-supplied
 	// CalDAV/CardDAV base URLs (SSRF guard) and otherwise never re-adds them, so
@@ -492,6 +497,9 @@ func main() {
 				// base URL is configured (the proxy injects it); else hidden.
 				"calendar": engineConfigured && caldavURL != "",
 				"contacts": engineConfigured && carddavURL != "",
+				// Apps & Bots manage surface (mail.vulos.org/apps) is available when
+				// the place is mounted (read by reference at request time).
+				"apps": appsEnabled,
 			},
 		})
 	})
@@ -600,6 +608,69 @@ func main() {
 		log.Printf("webmail: proxying /v1 → lilmail engine %s (broker → imap %s:%s, smtp %s:%s)", engineURL, imapHost, imapPort, smtpHost, smtpPort)
 	}
 
+	// ── Apps & Bots place (shared @vulos/apps platform) ──────────────────────
+	// The Mail product hosts an apps & bots place via the product-agnostic
+	// appsplatform handler set + a Mail ProductAdapter. Apps act on / read mail
+	// through lilmail's /v1 (the same engine the webmail proxies to), acting as a
+	// configured service mailbox brokered with the validated server credential.
+	//
+	// Open-core seam: the standalone SQLite registry is the default. A Vulos Cloud
+	// developer-console Registry would be wired here when selected (it implements
+	// the SAME appsplatform.Registry in a CLOSED package this OSS core never
+	// imports — see appsplatform/seam.go), so removing it never breaks this build.
+	if env("VULOS_APPS", "") != "off" {
+		if cp := env("VULOS_APPS_CP_URL", ""); cp != "" {
+			// Cloud hook (env-gated): the cloud apps Registry is a closed package not
+			// built into this OSS binary; fall back to the standalone default rather
+			// than fail. A Vulos Cloud build wires cloudapps.New(cp) at this seam.
+			log.Printf("apps: VULOS_APPS_CP_URL set but the cloud apps registry is not built into this OSS binary; using the standalone registry")
+		}
+		appsDB := env("VULOS_APPS_DB", filepath.Join(dataDir, "apps.db"))
+		appsReg, aerr := appsplatform.NewStandaloneRegistry(appsDB,
+			appsplatform.WithScopeSet(appsplatform.NewScopeSet(appsplatform.ScopeAppsRead, appsplatform.ScopeAppsWrite)))
+		if aerr != nil {
+			log.Printf("apps: registry unavailable (%v); apps & bots place disabled", aerr)
+		} else {
+			appsDisp := appsplatform.NewDispatcher(appsReg, appsplatform.ProductMail)
+			mailAdapter := mailapps.New(mailapps.Config{
+				EngineURL:    env("LILMAIL_ENGINE_URL", ""),
+				BrokerSecret: strings.TrimSpace(env("LILMAIL_BROKER_SECRET", "")),
+				Mailbox:      env("VULOS_MAIL_APPS_ACCOUNT", ""),
+				Password:     env("VULOS_MAIL_APPS_PASSWORD", ""),
+				IMAPHost:     imapHost, IMAPPort: imapPort, SMTPHost: smtpHost, SMTPPort: smtpPort,
+			})
+			// Management API auth: reuse the webmail session. The signed-in mailbox
+			// is the owner; the seeded VULOS_ACCOUNT (if any) is treated as admin so
+			// it can manage every app in a single-operator deployment.
+			appsAdmin := func(r *http.Request) (string, bool, bool) {
+				sess, ok := webSessions.get(cookieValue(r, webSessionCookie))
+				if !ok {
+					return "", false, false
+				}
+				return sess.user, acct != "" && sess.user == acct, true
+			}
+			appsH, herr := appsplatform.NewHandler(appsplatform.MountConfig{
+				Adapter:    mailAdapter,
+				Registry:   appsReg,
+				Dispatcher: appsDisp,
+				Admin:      appsAdmin,
+				BasePath:   "/api/apps",
+			})
+			if herr != nil {
+				log.Printf("apps: handler init failed (%v); apps & bots place disabled", herr)
+			} else {
+				httpMux.Handle("/api/apps", appsH)  // base
+				httpMux.Handle("/api/apps/", appsH) // subtree (runtime, hooks, rotate, …)
+				appsEnabled = true
+				if mailAdapter.Configured() {
+					log.Printf("apps & bots: mounted at /api/apps (acting as mailbox %s via engine %s)", env("VULOS_MAIL_APPS_ACCOUNT", ""), env("LILMAIL_ENGINE_URL", ""))
+				} else {
+					log.Printf("apps & bots: mounted at /api/apps (management only — set LILMAIL_ENGINE_URL + VULOS_MAIL_APPS_ACCOUNT/PASSWORD to let apps act on mail)")
+				}
+			}
+		}
+	}
+
 	// Webmail compose endpoint (Basic auth via the user's IMAP credentials). The
 	// bundled webmail now sends through the /v1 proxy (POST /v1/messages → lilmail);
 	// this endpoint remains as a simple authenticated send API for scripts/clients.
@@ -677,6 +748,11 @@ func main() {
 		}
 		if engineConfigured && carddavURL != "" {
 			httpMux.HandleFunc("/contacts", serveSPA)
+		}
+		// Apps & Bots manage surface (mail.vulos.org/apps), reachable from Settings.
+		// Served as the SPA deep-link only when the place is actually mounted.
+		if appsEnabled {
+			httpMux.HandleFunc("/apps", serveSPA)
 		}
 		httpMux.Handle("/", http.FileServer(http.Dir(dir)))
 	}

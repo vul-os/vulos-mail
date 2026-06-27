@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@vulos/apps-ui": "file:../../vulos-apps/ui",
     "@vulos/mail-ui": "file:../../vulos-mail-ui",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

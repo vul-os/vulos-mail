@@ -56,6 +56,21 @@ export default function AccountSettings({ onLogout }) {
         </div>
       </section>
 
+      {caps.apps && (
+        <section className="vm-set-section">
+          <h3 className="vm-set-section-title">Apps &amp; bots</h3>
+          <div className="vm-set-group vm-acct">
+            <p className="vm-acct-note">
+              <Icon name="server" />
+              Install and manage apps &amp; bots that read and act on your mail via the lilmail /v1 API.
+            </p>
+            <a className="vm-btn vm-btn-ghost vm-btn-block" href="/apps">
+              <Icon name="settings" /> Manage apps &amp; bots
+            </a>
+          </div>
+        </section>
+      )}
+
       {caps.changePassword && <ChangePassword />}
     </>
   );
