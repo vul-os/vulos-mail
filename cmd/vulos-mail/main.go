@@ -263,8 +263,21 @@ func main() {
 	abuseFilter := abuse.New(abuse.Config{})
 
 	// Inbound credential-check brute-force limiter, shared across IMAP, SMTP
-	// submission, and JMAP Basic auth (keyed per client IP and per account).
+	// submission, JMAP Basic auth, AND the webmail HTTP auth endpoints (login,
+	// in-place password change, the /api/webmail/send Basic-auth gate, and the
+	// /api/llm gate) — keyed per client IP and per account.
 	authLimiter := authlimit.New(authlimit.Config{})
+
+	// Trusted fronting-proxy allowlist (CIDR/IP). Honoured for X-Forwarded-For
+	// (rate-limit keying) and X-Forwarded-Proto (Secure-cookie decision) — only
+	// from a peer in this list, so a direct client can't spoof either header.
+	var trustedProxies []string
+	if v := env("VULOS_TRUSTED_PROXIES", ""); v != "" {
+		trustedProxies = strings.Split(v, ",")
+	}
+	trustedNets := parseTrustedProxies(trustedProxies)
+	// guard wraps the brute-force limiter for the HTTP auth endpoints.
+	guard := &authGuard{lim: authLimiter, trusted: trustedNets}
 
 	// Listeners.
 	authn := &emailauth.Authenticator{} // real DNS
@@ -335,10 +348,6 @@ func main() {
 				signupRate = n
 			}
 		}
-		var trustedProxies []string
-		if v := env("VULOS_TRUSTED_PROXIES", ""); v != "" {
-			trustedProxies = strings.Split(v, ",")
-		}
 		signupH := signup.Handler(signup.Config{
 			Domain: domain, Gate: signupGate, Issuer: signupIssuer, Provision: mgr.AddAccount,
 			RatePerHour: signupRate, TrustedProxies: trustedProxies,
@@ -360,9 +369,18 @@ func main() {
 				if !ok {
 					return "", false
 				}
-				if _, err := mgr.AuthIMAP(u, p); err != nil {
+				// Per-IP/per-account brute-force throttle (shared limiter). A
+				// locked key is refused (401) without reaching the credential
+				// check; the Handler has no way to surface a 429 here.
+				ip := clientIP(r, guard.trusted)
+				if guard.lim.AnyLocked(ip, u) {
 					return "", false
 				}
+				if _, err := mgr.AuthIMAP(u, p); err != nil {
+					guard.lim.Fail(ip, u)
+					return "", false
+				}
+				guard.lim.Success(ip, u)
 				return u, true
 			}
 			httpMux.Handle("/api/llm/", px.Handler("/api/llm", llmAuth))
@@ -388,52 +406,35 @@ func main() {
 	// present it to the engine as broker headers on every request. The mail-ui's
 	// own /v1 calls ride that cookie (credentials: 'include').
 	webSessions := newWebSessionStore(12 * time.Hour)
-	secureCookie := tlsCfg != nil
-	setSessionCookie := func(w http.ResponseWriter, tok string, maxAge int) {
+	// The session cookie must be Secure whenever the browser↔server hop is HTTPS.
+	// That hop is HTTPS when we terminate TLS ourselves (tlsCfg != nil), when TLS
+	// is terminated by a trusted upstream proxy (X-Forwarded-Proto: https from a
+	// trusted peer), or when the operator forces it (VULOS_FORCE_SECURE_COOKIE)
+	// for a deployment fronted by TLS that doesn't set XFP.
+	forceSecureCookie := env("VULOS_FORCE_SECURE_COOKIE", "") != ""
+	secureCookieFor := func(r *http.Request) bool {
+		if tlsCfg != nil || forceSecureCookie {
+			return true
+		}
+		return trustedPeer(r, trustedNets) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	}
+	setSessionCookie := func(w http.ResponseWriter, r *http.Request, tok string, maxAge int) {
 		http.SetCookie(w, &http.Cookie{
 			Name: webSessionCookie, Value: tok, Path: "/",
-			HttpOnly: true, Secure: secureCookie, SameSite: http.SameSiteLaxMode,
+			HttpOnly: true, Secure: secureCookieFor(r), SameSite: http.SameSiteLaxMode,
 			MaxAge: maxAge,
 		})
 	}
 	// Sign in: validate mailbox credentials (Basic auth or JSON body), then mint a
 	// webmail session cookie holding them server-side for the /v1 proxy to broker.
-	httpMux.HandleFunc("/api/webmail/login", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		var u, p string
-		if bu, bp, ok := r.BasicAuth(); ok {
-			u, p = bu, bp
-		} else {
-			var req struct {
-				User     string `json:"user"`
-				Password string `json:"password"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
-				return
-			}
-			u, p = req.User, req.Password
-		}
-		if _, err := mgr.AuthIMAP(u, p); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"invalid credentials"}`))
-			return
-		}
-		tok := webSessions.create(u, p)
-		setSessionCookie(w, tok, int((12 * time.Hour).Seconds()))
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"email": u, "username": u})
-	})
+	authIMAP := func(u, p string) error { _, err := mgr.AuthIMAP(u, p); return err }
+	httpMux.HandleFunc("/api/webmail/login", webmailLoginHandler(webSessions, authIMAP, guard, setSessionCookie))
 	// Sign out: drop the server-side session and clear the cookie.
 	httpMux.HandleFunc("/api/webmail/logout", func(w http.ResponseWriter, r *http.Request) {
 		if c, err := r.Cookie(webSessionCookie); err == nil {
 			webSessions.delete(c.Value)
 		}
-		setSessionCookie(w, "", -1)
+		setSessionCookie(w, r, "", -1)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
@@ -451,6 +452,22 @@ func main() {
 	passwordChangeable := env("VULOS_CP_URL", "") == ""
 	signupEnabled := env("VULOS_SIGNUP", "") != "off"
 	engineConfigured := env("LILMAIL_ENGINE_URL", "") != ""
+
+	// Calendar/Contacts standalone: the /v1 proxy strips any client-supplied
+	// CalDAV/CardDAV base URLs (SSRF guard) and otherwise never re-adds them, so
+	// the mounted Calendar/Contacts surfaces would be non-functional. When the
+	// operator configures TRUSTED DAV base URLs here, the proxy injects them on
+	// every request (after the strip) so lilmail dials them with the brokered
+	// credential — making cal/contacts work standalone while forged values stay
+	// stripped. Left unset → the surfaces stay hidden.
+	//
+	// NOTE: lilmail's brokered DAV dial presents X-Vulos-Mail-Secret as an HTTP
+	// Bearer token (oauth2 mode), so the configured endpoints must accept Bearer
+	// auth. vulos-mail's own /dav backend is Basic-auth (IMAP creds) only, so we
+	// do NOT auto-derive these from the engine; they are explicit, config-gated,
+	// and default off. See SELFHOST.md.
+	caldavURL := strings.TrimSpace(env("LILMAIL_CALDAV_URL", ""))
+	carddavURL := strings.TrimSpace(env("LILMAIL_CARDDAV_URL", ""))
 
 	// Account surface for the standalone self-hoster: the signed-in identity, the
 	// exact IMAP/SMTP connection settings for an external client, and which
@@ -471,6 +488,10 @@ func main() {
 				"changePassword": passwordChangeable,
 				"signup":         signupEnabled,
 				"engine":         engineConfigured,
+				// Calendar/Contacts only function standalone when a trusted DAV
+				// base URL is configured (the proxy injects it); else hidden.
+				"calendar": engineConfigured && caldavURL != "",
+				"contacts": engineConfigured && carddavURL != "",
 			},
 		})
 	})
@@ -506,10 +527,16 @@ func main() {
 			writeJSONErr(w, http.StatusBadRequest, "new password must be at least 8 characters")
 			return
 		}
+		ip, ok := guard.begin(w, r, sess.user)
+		if !ok {
+			return
+		}
 		if _, err := mgr.AuthIMAP(sess.user, req.CurrentPassword); err != nil {
+			guard.fail(ip, sess.user)
 			writeJSONErr(w, http.StatusUnauthorized, "current password is incorrect")
 			return
 		}
+		guard.success(ip, sess.user)
 		if err := localID.Upsert(sess.user, req.NewPassword); err != nil {
 			writeJSONErr(w, http.StatusInternalServerError, "could not update password")
 			return
@@ -564,9 +591,12 @@ func main() {
 			// set them fresh from the validated session.
 			r.Header.Del("Cookie")
 			r.Header.Del("Authorization")
-			injectBrokerHeaders(r.Header, brokerSecret, sess.user, sess.pass, imapHost, imapPort, smtpHost, smtpPort)
+			injectBrokerHeaders(r.Header, brokerSecret, sess.user, sess.pass, imapHost, imapPort, smtpHost, smtpPort, caldavURL, carddavURL)
 			proxy.ServeHTTP(w, r)
 		})
+		if caldavURL != "" || carddavURL != "" {
+			log.Printf("webmail: brokering DAV base URLs to engine (caldav=%q carddav=%q)", caldavURL, carddavURL)
+		}
 		log.Printf("webmail: proxying /v1 → lilmail engine %s (broker → imap %s:%s, smtp %s:%s)", engineURL, imapHost, imapPort, smtpHost, smtpPort)
 	}
 
@@ -584,10 +614,16 @@ func main() {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		ip, ok := guard.begin(w, r, u)
+		if !ok {
+			return
+		}
 		if _, err := mgr.AuthIMAP(u, p); err != nil {
+			guard.fail(ip, u)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		guard.success(ip, u)
 		var req struct {
 			To          []string `json:"to"`
 			Cc          []string `json:"cc"`
@@ -629,12 +665,19 @@ func main() {
 		// single-page webmail bundle (App.jsx switches on the path), so these
 		// routes must serve the SPA's index.html rather than 404 in the plain
 		// FileServer. The client then mounts <Calendar/> / <Contacts/> against
-		// the same /v1 session the mailbox uses.
+		// the same /v1 session the mailbox uses. They are only mounted when a
+		// trusted DAV base URL is configured (LILMAIL_CALDAV_URL /
+		// LILMAIL_CARDDAV_URL) so the surfaces are actually functional; otherwise
+		// the deep-link routes are left to 404 (surface hidden).
 		serveSPA := func(w http.ResponseWriter, r *http.Request) {
 			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
 		}
-		httpMux.HandleFunc("/calendar", serveSPA)
-		httpMux.HandleFunc("/contacts", serveSPA)
+		if engineConfigured && caldavURL != "" {
+			httpMux.HandleFunc("/calendar", serveSPA)
+		}
+		if engineConfigured && carddavURL != "" {
+			httpMux.HandleFunc("/contacts", serveSPA)
+		}
 		httpMux.Handle("/", http.FileServer(http.Dir(dir)))
 	}
 
@@ -802,17 +845,20 @@ var mailBrokerHeaders = []string{
 	"X-Vulos-Mail-Auth", "X-Vulos-Mail-Secret",
 	"X-Vulos-Mail-Imap-Host", "X-Vulos-Mail-Imap-Port",
 	"X-Vulos-Mail-Smtp-Host", "X-Vulos-Mail-Smtp-Port",
-	// CalDAV/CardDAV brokered base URLs. This proxy is IMAP-only, so these are
-	// stripped on the way in and never re-added.
+	// CalDAV/CardDAV brokered base URLs. Always stripped inbound; re-added by
+	// injectBrokerHeaders ONLY from trusted operator config (LILMAIL_CALDAV_URL /
+	// LILMAIL_CARDDAV_URL), never from a client-supplied value.
 	"X-Vulos-Mail-Caldav-Url", "X-Vulos-Mail-Carddav-Url",
 }
 
 // injectBrokerHeaders strips the full inbound broker/credential header set from h
 // and then sets the trusted values for the validated IMAP session. Stripping
-// first (rather than relying on Set's overwrite) guarantees that headers this
-// proxy does not re-add — e.g. the CalDAV/CardDAV base URLs — cannot be smuggled
-// through to the lilmail engine.
-func injectBrokerHeaders(h http.Header, brokerSecret, user, pass, imapHost, imapPort, smtpHost, smtpPort string) {
+// first (rather than relying on Set's overwrite) guarantees that headers a client
+// forges cannot be smuggled through to the lilmail engine. The CalDAV/CardDAV
+// base URLs are re-added ONLY from the operator-configured (trusted) caldavURL /
+// carddavURL — an empty value leaves the header stripped, so a forged inbound
+// value can never survive and the cal/contacts surfaces simply stay inert.
+func injectBrokerHeaders(h http.Header, brokerSecret, user, pass, imapHost, imapPort, smtpHost, smtpPort, caldavURL, carddavURL string) {
 	for _, hdr := range mailBrokerHeaders {
 		h.Del(hdr)
 	}
@@ -826,6 +872,14 @@ func injectBrokerHeaders(h http.Header, brokerSecret, user, pass, imapHost, imap
 	h.Set("X-Vulos-Mail-Imap-Port", imapPort)
 	h.Set("X-Vulos-Mail-Smtp-Host", smtpHost)
 	h.Set("X-Vulos-Mail-Smtp-Port", smtpPort)
+	// Trusted, operator-configured DAV base URLs only (config-gated). Stripped
+	// above when unset so client-forged values never reach the engine.
+	if caldavURL != "" {
+		h.Set("X-Vulos-Mail-Caldav-Url", caldavURL)
+	}
+	if carddavURL != "" {
+		h.Set("X-Vulos-Mail-Carddav-Url", carddavURL)
+	}
 }
 
 // cookieValue returns the value of the named cookie, or "" when absent.
@@ -834,4 +888,164 @@ func cookieValue(r *http.Request, name string) string {
 		return c.Value
 	}
 	return ""
+}
+
+// authGuard applies the shared brute-force limiter (internal/authlimit) to the
+// webmail HTTP auth endpoints, keyed per client IP and per account so an
+// attacker can neither spray one password across accounts from one host nor
+// grind one account from many hosts. It is the HTTP counterpart to the limiter
+// already wired into the IMAP/SMTP/JMAP adapters.
+type authGuard struct {
+	lim     *authlimit.Limiter
+	trusted []*net.IPNet
+}
+
+// begin resolves the request's client IP (honouring trusted-proxy XFF) and
+// reports whether the request may proceed to the real credential check. When the
+// IP or account is currently locked out it writes a 429 JSON error and returns
+// ok=false; the caller must return. The returned ip is passed to fail/success.
+func (g *authGuard) begin(w http.ResponseWriter, r *http.Request, account string) (ip string, ok bool) {
+	ip = clientIP(r, g.trusted)
+	if g.lim != nil && g.lim.AnyLocked(ip, account) {
+		writeJSONErr(w, http.StatusTooManyRequests, "too many failed attempts; try again later")
+		return ip, false
+	}
+	return ip, true
+}
+
+// fail records a failed credential check for the IP and account.
+func (g *authGuard) fail(ip, account string) {
+	if g.lim != nil {
+		g.lim.Fail(ip, account)
+	}
+}
+
+// success clears the failure history after a correct credential check.
+func (g *authGuard) success(ip, account string) {
+	if g.lim != nil {
+		g.lim.Success(ip, account)
+	}
+}
+
+// webmailLoginHandler builds the POST /api/webmail/login handler: it validates
+// mailbox credentials (Basic auth or JSON body) under the brute-force guard,
+// then mints a session cookie holding them server-side for the /v1 proxy. It is a
+// standalone constructor so the rate-limited auth path is unit-testable.
+func webmailLoginHandler(sessions *webSessionStore, authIMAP func(user, pass string) error, guard *authGuard, setCookie func(http.ResponseWriter, *http.Request, string, int)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var u, p string
+		if bu, bp, ok := r.BasicAuth(); ok {
+			u, p = bu, bp
+		} else {
+			var req struct {
+				User     string `json:"user"`
+				Password string `json:"password"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
+				return
+			}
+			u, p = req.User, req.Password
+		}
+		ip, ok := guard.begin(w, r, u)
+		if !ok {
+			return
+		}
+		if err := authIMAP(u, p); err != nil {
+			guard.fail(ip, u)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"invalid credentials"}`))
+			return
+		}
+		guard.success(ip, u)
+		tok := sessions.create(u, p)
+		setCookie(w, r, tok, int((12 * time.Hour).Seconds()))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"email": u, "username": u})
+	}
+}
+
+// parseTrustedProxies parses CIDR / bare-IP strings into networks. Mirrors the
+// signup handler's parsing so the webmail HTTP endpoints key their rate limit on
+// the same trusted-proxy model. Invalid entries are skipped.
+func parseTrustedProxies(list []string) []*net.IPNet {
+	var out []*net.IPNet
+	for _, c := range list {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		if !strings.Contains(c, "/") {
+			if ip := net.ParseIP(c); ip != nil {
+				bits := 32
+				if ip.To4() == nil {
+					bits = 128
+				}
+				c = c + "/" + strconv.Itoa(bits)
+			}
+		}
+		if _, n, err := net.ParseCIDR(c); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// ipTrusted reports whether ip (a string) is within any trusted network.
+func ipTrusted(ip string, trusted []*net.IPNet) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	for _, n := range trusted {
+		if n.Contains(parsed) {
+			return true
+		}
+	}
+	return false
+}
+
+// trustedPeer reports whether the request's immediate peer (RemoteAddr) is a
+// trusted fronting proxy — used to decide whether X-Forwarded-Proto may be
+// believed for the Secure-cookie decision.
+func trustedPeer(r *http.Request, trusted []*net.IPNet) bool {
+	peer := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		peer = host
+	}
+	return ipTrusted(peer, trusted)
+}
+
+// clientIP returns the request's client IP. X-Forwarded-For is honoured ONLY
+// when the immediate peer is in the trusted-proxy allowlist; otherwise an
+// untrusted client could spoof its rate-limit key with a crafted XFF header. The
+// rightmost untrusted address in the XFF chain is used. Mirrors signup.clientIP.
+func clientIP(r *http.Request, trusted []*net.IPNet) string {
+	peer := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		peer = host
+	}
+	if !ipTrusted(peer, trusted) {
+		return peer
+	}
+	xff := r.Header.Get("X-Forwarded-For")
+	if xff == "" {
+		return peer
+	}
+	parts := strings.Split(xff, ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		hop := strings.TrimSpace(parts[i])
+		if hop == "" {
+			continue
+		}
+		if !ipTrusted(hop, trusted) {
+			return hop
+		}
+	}
+	return peer
 }

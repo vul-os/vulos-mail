@@ -75,6 +75,40 @@ Run lilmail with `LILMAIL_BROKER_SECRET=<secret>`, then point vulos-mail at it:
 | `LILMAIL_BROKER_SECRET` | shared secret authorizing brokered credentials (must equal lilmail's `LILMAIL_BROKER_SECRET`) |
 | `VULOS_MAIL_IMAP_HOST` / `VULOS_MAIL_IMAP_PORT` | IMAP endpoint the engine dials back (default `VULOS_DOMAIN` / `993`; **implicit TLS** — lilmail dials IMAPS) |
 | `VULOS_MAIL_SMTP_HOST` / `VULOS_MAIL_SMTP_PORT` | SMTP submission endpoint the engine dials back (default `VULOS_DOMAIN` / `587`; STARTTLS, or `465` for implicit TLS) |
+| `LILMAIL_CALDAV_URL` | trusted CalDAV base URL injected into the broker headers so the standalone **Calendar** surface works (off → Calendar hidden). See *Calendar & Contacts* below. |
+| `LILMAIL_CARDDAV_URL` | trusted CardDAV base URL injected into the broker headers so the standalone **Contacts** surface works (off → Contacts hidden). |
+
+### Calendar & Contacts (standalone)
+
+The `/v1` proxy always **strips** any client-supplied `X-Vulos-Mail-Caldav-Url` /
+`X-Vulos-Mail-Carddav-Url` (SSRF / credential-exfil guard) and re-injects them
+**only** from the trusted, operator-set `LILMAIL_CALDAV_URL` /
+`LILMAIL_CARDDAV_URL`. When set, lilmail dials those DAV endpoints with the
+signed-in user's brokered credential and the Calendar/Contacts surfaces become
+functional; the `/api/webmail/account` capability flags (`calendar`, `contacts`)
+flip on and the `/calendar` and `/contacts` deep links are mounted. When unset,
+the surfaces stay hidden.
+
+> **Auth constraint:** lilmail's brokered DAV dial presents `X-Vulos-Mail-Secret`
+> as an HTTP **Bearer** token (its oauth2 DAV mode), so the configured endpoints
+> must accept Bearer auth. vulos-mail's own built-in `/dav` backend is **Basic
+> auth** (IMAP credentials) only, so these URLs are **not** auto-derived from
+> `LILMAIL_ENGINE_URL` — point them at a Bearer-capable DAV service (or leave them
+> unset to keep the surfaces hidden).
+
+### Abuse / hardening
+
+| Env | Purpose |
+|---|---|
+| `VULOS_TRUSTED_PROXIES` | CIDR/IP allowlist of fronting proxies. Their `X-Forwarded-For` is honoured for HTTP auth rate-limiting and their `X-Forwarded-Proto: https` is honoured for the Secure-cookie decision; a direct client can't spoof either. |
+| `VULOS_FORCE_SECURE_COOKIE` | set (any non-empty value) to force the session cookie's `Secure` flag when TLS is terminated upstream and `X-Forwarded-Proto` isn't available. |
+
+The webmail HTTP auth endpoints (`POST /api/webmail/login`, the
+`/api/webmail/account/password` current-password check, the `POST
+/api/webmail/send` Basic-auth gate, and the `/api/llm` gate) share the same
+per-IP/per-account brute-force limiter already wired into IMAP/SMTP/JMAP; a
+locked key is refused (HTTP 429, or 401 on the LLM gate) before the credential
+check runs.
 
 If `LILMAIL_ENGINE_URL` is **unset**, the webmail's `/v1` calls return a clear
 `{"error":"mail engine not configured"}` (HTTP 503) and the UI shows a "mail
