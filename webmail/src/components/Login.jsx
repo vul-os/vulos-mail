@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Logo } from "@vulos/mail-ui";
 
 // Solve an Altcha proof-of-work challenge: find n with SHA-256(salt+n)==challenge.
 async function solveAltcha(ch) {
@@ -84,8 +85,7 @@ export default function Login({ onLogin }) {
     <section id="login" className="login">
       <div className="login-card">
         <div className="brand">
-          <span className="logo" aria-hidden="true" />
-          <span className="wordmark">Vulos Mail</span>
+          <Logo wordmark />
         </div>
         <p className="login-sub">Sovereign mail. You own it.</p>
 
