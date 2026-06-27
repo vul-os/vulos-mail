@@ -25,6 +25,7 @@ import (
 	"time"
 
 	appsplatform "github.com/vul-os/vulos-apps/appsplatform"
+	"github.com/vul-os/vulos-apps/mcp"
 	imapadapter "github.com/vul-os/vulos-mail/adapters/imap"
 	jmapadapter "github.com/vul-os/vulos-mail/adapters/jmap"
 	smtpin "github.com/vul-os/vulos-mail/adapters/smtp"
@@ -666,6 +667,30 @@ func main() {
 					log.Printf("apps & bots: mounted at /api/apps (acting as mailbox %s via engine %s)", env("VULOS_MAIL_APPS_ACCOUNT", ""), env("LILMAIL_ENGINE_URL", ""))
 				} else {
 					log.Printf("apps & bots: mounted at /api/apps (management only — set LILMAIL_ENGINE_URL + VULOS_MAIL_APPS_ACCOUNT/PASSWORD to let apps act on mail)")
+				}
+
+				// ── MCP server (same seam, agent shape) ──────────────────────
+				// The MCP layer is a different shape over the SAME ProductAdapter,
+				// Registry and vat_ token auth: the adapter's Act actions become MCP
+				// tools and its Read kinds become MCP resources (described precisely
+				// via the mcp.Descriptor the adapter implements). It ships standalone
+				// in this OSS binary — point any MCP agent at /mcp with an apps token.
+				//
+				// Open-core seam: MCPConfig.Gateway (cloud MCP aggregation) is left
+				// nil here; a Vulos Cloud composition root wires it env-gated. The OSS
+				// core never imports a Gateway implementation.
+				mcpH, merr := mcp.NewHandler(mcp.MCPConfig{
+					Adapter:  mailAdapter,
+					Registry: appsReg,
+					Emit:     appsDisp.EmitFunc(),
+					BasePath: "/mcp",
+				})
+				if merr != nil {
+					log.Printf("mcp: handler init failed (%v); MCP server disabled", merr)
+				} else {
+					httpMux.Handle("/mcp", mcpH)  // base
+					httpMux.Handle("/mcp/", mcpH) // subtree
+					log.Printf("mcp: mounted at /mcp (agents operate Mail via the apps token + adapter)")
 				}
 			}
 		}

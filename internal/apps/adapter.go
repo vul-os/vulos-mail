@@ -31,6 +31,7 @@ import (
 	"time"
 
 	appsplatform "github.com/vul-os/vulos-apps/appsplatform"
+	"github.com/vul-os/vulos-apps/mcp"
 )
 
 // Config wires the adapter to the lilmail engine and the apps mailbox. It mirrors
@@ -65,6 +66,7 @@ type Adapter struct {
 }
 
 var _ appsplatform.ProductAdapter = (*Adapter)(nil)
+var _ mcp.Descriptor = (*Adapter)(nil)
 
 // New builds a Mail adapter from cfg.
 func New(cfg Config) *Adapter {
@@ -330,6 +332,111 @@ func (a *Adapter) webhookToMessage(app *appsplatform.App, payload json.RawMessag
 	return json.Marshal(map[string]any{
 		"to": p.To, "cc": p.Cc, "subject": p.Subject, "text": p.Text, "html": p.HTML,
 	})
+}
+
+// MCPTools publishes the Mail adapter's mutating Act actions as MCP tools (the
+// apps:write surface). Each tool's arguments object becomes the action Payload;
+// every tool AcceptsTarget so an agent can name the IMAP folder the message
+// lives in (lifted into ActionRequest.Target and access-checked before Act). It
+// implements mcp.Descriptor so the product's /mcp server is fully described.
+func (a *Adapter) MCPTools() []mcp.ToolSpec {
+	composeSchema := json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "to": {"type": "array", "items": {"type": "string"}, "description": "Recipient email addresses."},
+    "cc": {"type": "array", "items": {"type": "string"}, "description": "Cc email addresses."},
+    "subject": {"type": "string", "description": "Message subject."},
+    "text": {"type": "string", "description": "Plain-text body."},
+    "html": {"type": "string", "description": "HTML body (optional)."}
+  },
+  "required": ["to"]
+}`)
+	return []mcp.ToolSpec{
+		{
+			Action:        "mail.send",
+			Description:   "Compose and send an email from the apps mailbox.",
+			InputSchema:   composeSchema,
+			AcceptsTarget: true,
+		},
+		{
+			Action:        "mail.draft",
+			Description:   "Save an email as a draft without sending it.",
+			InputSchema:   composeSchema,
+			AcceptsTarget: true,
+		},
+		{
+			Action:      "mail.flag",
+			Description: "Add or remove an IMAP flag/label on a message.",
+			InputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "uid": {"type": "string", "description": "IMAP UID of the message."},
+    "flag": {"type": "string", "description": "Flag/label to set (e.g. \\Seen, \\Flagged)."},
+    "add": {"type": "boolean", "description": "true to add the flag, false to remove it."}
+  },
+  "required": ["uid", "flag"]
+}`),
+			AcceptsTarget: true,
+		},
+		{
+			Action:      "mail.move",
+			Description: "Move a message to another IMAP folder.",
+			InputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "uid": {"type": "string", "description": "IMAP UID of the message."},
+    "toFolder": {"type": "string", "description": "Destination folder name."}
+  },
+  "required": ["uid", "toFolder"]
+}`),
+			AcceptsTarget: true,
+		},
+		{
+			Action:      "mail.delete",
+			Description: "Delete a message (trash by default, or permanently with hard).",
+			InputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "uid": {"type": "string", "description": "IMAP UID of the message."},
+    "hard": {"type": "boolean", "description": "true to permanently delete instead of moving to Trash."}
+  },
+  "required": ["uid"]
+}`),
+			AcceptsTarget: true,
+		},
+	}
+}
+
+// MCPResources publishes the Mail adapter's Read kinds as MCP resources (the
+// apps:read surface). Folder-scoped kinds AcceptTarget so they are addressed as
+// vulos://mail/<kind>/<folder>; per-item params (uid, q, limit) flow through the
+// resource URI query string into ReadRequest.Params.
+func (a *Adapter) MCPResources() []mcp.ResourceSpec {
+	return []mcp.ResourceSpec{
+		{
+			Kind:        "me",
+			Description: "The apps mailbox identity.",
+		},
+		{
+			Kind:        "folders",
+			Description: "The mailbox folder list.",
+		},
+		{
+			Kind:          "messages",
+			Description:   "Listing of messages in a folder (target = folder; ?limit=).",
+			AcceptsTarget: true,
+		},
+		{
+			Kind:          "message",
+			Description:   "A single message by UID (target = folder; ?uid=).",
+			AcceptsTarget: true,
+		},
+		{
+			Kind:          "search",
+			Description:   "Search messages in a folder (target = folder; ?q=&limit=).",
+			AcceptsTarget: true,
+		},
+	}
 }
 
 // folderQuery builds a ?folder= query for a non-empty target, else nil.
