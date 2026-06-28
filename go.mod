@@ -1,11 +1,16 @@
 module github.com/vul-os/vulos-mail
 
-go 1.25.0
+go 1.25.6
 
 // The shared Vulos Apps & Bots platform is consumed from the sibling checkout so
 // the product/proxy can host an apps & bots place. The lilmail engine stays pure
 // (it never imports the platform); only this product binary does.
 replace github.com/vul-os/vulos-apps => ../vulos-apps
+
+// vulos-deliver is the shared deliverability engine (SES backend). The local
+// replace lets the product build against the sibling checkout during development;
+// remove it and pin a released version for production builds.
+replace github.com/vul-os/vulos-deliver => ../vulos-deliver
 
 require (
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
@@ -30,6 +35,7 @@ require (
 	github.com/minio/minio-go/v7 v7.0.91
 	github.com/prometheus/client_golang v1.23.2
 	github.com/vul-os/vulos-apps v0.0.0-00010101000000-000000000000
+	github.com/vul-os/vulos-deliver v0.0.0-00010101000000-000000000000
 	modernc.org/sqlite v1.50.1
 )
 
@@ -60,6 +66,21 @@ require (
 )
 
 require (
+	github.com/aws/aws-sdk-go-v2 v1.42.0 // indirect
+	github.com/aws/aws-sdk-go-v2/config v1.32.25 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.24 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.29 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.29 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.29 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.30 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.12 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.29 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sesv2 v1.62.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/signin v1.2.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.31.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.36.6 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.43.3 // indirect
+	github.com/aws/smithy-go v1.27.1 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

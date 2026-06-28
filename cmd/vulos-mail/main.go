@@ -179,12 +179,37 @@ func main() {
 		log.Printf("TLS enabled (STARTTLS on SMTP/IMAP, HTTPS on API)")
 	}
 
-	// Outbound: warm-IP pool + reputation + scheduler over a real SMTP sender.
+	// Outbound: warm-IP pool + reputation + scheduler behind a pluggable Sender.
+	//
+	// Backend selection (DELIVER_BACKEND env):
+	//   ""    (default) → built-in direct-SMTP sender; no external deps, self-host friendly.
+	//   "ses"           → vulos-deliver SES backend (opt-in, cloud/SaaS deployments).
+	//   "smtp"          → vulos-deliver managed-SMTP relay (opt-in).
+	//
+	// SES credentials: DELIVER_SES_KEY / DELIVER_SES_SECRET / DELIVER_SES_REGION.
+	// When key/secret are empty, the SES backend falls back to the standard AWS
+	// credential chain (IAM role, ~/.aws/credentials, etc.).
 	pool := mtaout.NewPool([]string{}, []string{}) // configure source IPs in prod
 	rep := mtaout.NewReputation(100, 0.10, 0.02)
 	warm := mtaout.NewWarmup([]int{50, 100, 500, 1000, 5000, 10000, 50000})
+	outSender, err := mtaout.NewSender(mtaout.SenderConfig{
+		HELO:           domain,
+		DeliverBackend: env("DELIVER_BACKEND", ""),
+		SESRegion:      env("DELIVER_SES_REGION", ""),
+		SESKey:         env("DELIVER_SES_KEY", ""),
+		SESSecret:      env("DELIVER_SES_SECRET", ""),
+		SESConfigSet:   env("DELIVER_SES_CONFIG_SET", ""),
+	})
+	if err != nil {
+		log.Fatalf("outbound sender: %v", err)
+	}
+	if env("DELIVER_BACKEND", "") != "" {
+		log.Printf("outbound sender: vulos-deliver/%s", env("DELIVER_BACKEND", ""))
+	} else {
+		log.Printf("outbound sender: built-in SMTP (direct MX delivery, self-host default)")
+	}
 	sched := mtaout.NewScheduler(mtaout.Config{
-		Sender: &mtaout.SMTPSender{HELO: domain}, Pool: pool, Warmup: warm, Reputation: rep,
+		Sender: outSender, Pool: pool, Warmup: warm, Reputation: rep,
 		MaxPerDomain: 10,
 	})
 
