@@ -768,15 +768,17 @@ func main() {
 	adminBrokerSecret := strings.TrimSpace(env("LILMAIL_BROKER_SECRET", ""))
 	// Free-mail mailbox provisioning seam (used by Cloud's free-org-mail feature).
 	httpMux.HandleFunc("/api/admin/provision-mailbox", provisionMailboxHandler(mgr, domain, adminBrokerSecret))
+	// Bulk PIM import: OS import engine writes owned contact/event copies here.
+	registerImportHandlers(httpMux, contactStore, calStore, adminBrokerSecret)
 	// Liveness for the status page / load balancer.
 	httpMux.HandleFunc("/healthz", healthzHandler)
 	// Advanced deliverability/health diagnostics (broker-gated JSON report).
 	diagRunner := newDiagRunner()
 	httpMux.HandleFunc("/api/diagnostics", diagnosticsHandler(diagRunner, adminBrokerSecret))
 	if adminBrokerSecret == "" {
-		log.Printf("ops: /api/diagnostics and /api/admin/provision-mailbox are CLOSED (set LILMAIL_BROKER_SECRET to enable); /healthz is open")
+		log.Printf("ops: /api/diagnostics, /api/admin/provision-mailbox, and /api/admin/import/* are CLOSED (set LILMAIL_BROKER_SECRET to enable); /healthz is open")
 	} else {
-		log.Printf("ops: /healthz (open), /api/diagnostics + /api/admin/provision-mailbox (broker-gated)")
+		log.Printf("ops: /healthz (open), /api/diagnostics + /api/admin/provision-mailbox + /api/admin/import/* (broker-gated)")
 	}
 
 	// Webmail static UI at the root (registered last; longest-prefix routing keeps
