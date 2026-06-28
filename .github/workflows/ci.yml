@@ -1,0 +1,57 @@
+# .github/workflows/ci.yml — build, test, and vet vulos-mail (Go)
+#
+# Triggers on:
+#   - push to any branch
+#   - pull request
+#
+# go.mod carries local `replace` directives pointing the shared Vulos modules at
+# sibling checkouts:
+#   replace github.com/vul-os/vulos-apps    => ../vulos-apps
+#   replace github.com/vul-os/vulos-deliver => ../vulos-deliver
+# CI clones those siblings next to this checkout so the replaces resolve before
+# `go build`/`go test` run. The replaces in go.mod are left unchanged.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+# Restrict default permissions to read-only; no job needs write access.
+permissions:
+  contents: read
+
+jobs:
+
+  # ── Go backend ──────────────────────────────────────────────────────────────
+  go-ci:
+    name: Go build / test / vet
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Clone the sibling modules that go.mod's local `replace` directives point
+      # at, so the module graph resolves them from disk (../<repo>) in CI.
+      - name: Clone sibling replace targets
+        run: |
+          git clone --depth 1 https://github.com/vul-os/vulos-apps ../vulos-apps
+          git clone --depth 1 https://github.com/vul-os/vulos-deliver ../vulos-deliver
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...

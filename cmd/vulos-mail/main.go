@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -833,7 +834,54 @@ func main() {
 		if appsEnabled {
 			httpMux.HandleFunc("/apps", serveSPA)
 		}
-		httpMux.Handle("/", http.FileServer(http.Dir(dir)))
+		// /inbox is the explicit sign-in entry point: the marketing landing's
+		// "Sign in" CTA targets it. It serves the SPA, which shows <Login/> while
+		// unauthenticated and the mailbox once signed in (currentSurface() maps any
+		// non calendar/contacts/apps path to the default mail surface).
+		httpMux.HandleFunc("/inbox", serveSPA)
+
+		// Standalone marketing landing for the Vulos Mail origin, mounted at /site/*
+		// so the page's relative ./assets/... refs resolve once we inject a
+		// <base href="/site/">. Public; it never shadows the SPA, which owns "/".
+		if siteSub, subErr := fs.Sub(siteFS, "site"); subErr == nil {
+			httpMux.Handle("/site/", http.StripPrefix("/site/", http.FileServer(http.FS(siteSub))))
+		} else {
+			log.Printf("marketing site unavailable: %v", subErr)
+		}
+
+		// Precompute the landing HTML once, injecting <base href="/site/"> into the
+		// <head> so the embedded page's relative asset URLs resolve under /site/.
+		var landingHTML []byte
+		if data, readErr := siteFS.ReadFile("site/index.html"); readErr == nil {
+			landingHTML = []byte(strings.Replace(string(data), "<head>", `<head><base href="/site/">`, 1))
+		} else {
+			log.Printf("marketing landing unavailable: %v", readErr)
+		}
+
+		// Auth-gated root. http.ServeMux routes "/" as a catch-all, so this handler
+		// also receives every path the more specific handlers above did not claim
+		// (SPA assets, unregistered deep-links). Only the EXACT "/" path branches to
+		// the landing; everything else keeps the original FileServer behavior, and
+		// signed-in visitors get the SPA at "/" too.
+		fileServer := http.FileServer(http.Dir(dir))
+		httpMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/" {
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+			if _, ok := webSessions.get(cookieValue(r, webSessionCookie)); ok {
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+			if landingHTML == nil {
+				// No landing embedded — fall back to the SPA so "/" still works.
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = w.Write(landingHTML)
+		})
 	}
 
 	go serve("mx", mxAddr, mx.ListenAndServe)
