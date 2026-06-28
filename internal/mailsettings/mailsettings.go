@@ -20,9 +20,10 @@ type Vacation struct {
 
 // Settings is one account's preferences.
 type Settings struct {
-	Signature string
-	Aliases   []string // additional addresses the account may send as
-	Vacation  Vacation
+	Signature  string
+	Aliases    []string // additional addresses the account may send as
+	Vacation   Vacation
+	HomeRegion string // storage-cell identifier; empty means "eu" (Phase-0 default)
 }
 
 // Store keeps per-account settings (in-memory; a persisted backend is a later

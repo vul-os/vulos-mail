@@ -36,6 +36,7 @@ import (
 	"github.com/vul-os/vulos-mail/internal/metrics"
 	"github.com/vul-os/vulos-mail/internal/mime"
 	"github.com/vul-os/vulos-mail/internal/model"
+	"github.com/vul-os/vulos-mail/internal/region"
 	"github.com/vul-os/vulos-mail/internal/seam"
 	"github.com/vul-os/vulos-mail/internal/tenant"
 	"github.com/vul-os/vulos-mail/services/mtaout"
@@ -73,6 +74,10 @@ type Manager struct {
 	// no-op. Both are populated by the optional cloud adapter.
 	Plans seam.Entitlements
 	Usage seam.Usage
+	// Regions resolves each mailbox to its home cell (region + internal endpoint).
+	// nil = all mailboxes resolve to the EU default (Phase-0 single-cell).
+	// Set to a configured *region.Resolver once multi-cell routing is wired.
+	Regions *region.Resolver
 
 	mu       sync.Mutex
 	accounts map[string]*account.Runtime
@@ -492,6 +497,16 @@ func (m *Manager) HandleBounce(reportingDomain string, msg mtaout.OutMessage, re
 	bounce := dsn.Build(reportingDomain, msg.From, msg.Rcpts, reason)
 	// Best-effort local delivery; if the sender isn't local, nothing to do.
 	_ = m.Deliver(context.Background(), msg.From, bounce)
+}
+
+// HomeRegion returns the region that owns mailbox's data.
+//
+// Phase-0: always region.EU unless m.Regions is set and carries an override.
+// The method is the single chokepoint so future callers (IMAP capability
+// advertisement, routing proxies) can branch on region without knowing the
+// resolver internals.
+func (m *Manager) HomeRegion(mailbox string) region.Region {
+	return m.Regions.Resolve(mailbox).Region
 }
 
 // GetSettings returns an account's settings (zero value if none/unset).
