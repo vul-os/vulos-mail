@@ -203,6 +203,9 @@ See [`SELFHOST.md`](SELFHOST.md) for the full list and the integration-seam deta
 | [`mail-ui/docs/SCREENSHOTS.md`](mail-ui/docs/SCREENSHOTS.md) | How the webmail screenshots are generated |
 | [`docs/DESIGN.md`](docs/DESIGN.md) | Design system + UX notes |
 | [`docs/BILLING-MODEL.md`](docs/BILLING-MODEL.md) | Optional hosted/billing seam model |
+| [`docs/DIAGNOSTICS.md`](docs/DIAGNOSTICS.md) | Deliverability/health diagnostics suite (CLI + API) |
+| [`docs/API.md`](docs/API.md) | Operations HTTP API (diagnostics, provisioning, healthz) |
+| [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) | Diagnostics + broker-endpoint configuration |
 
 ## Development
 

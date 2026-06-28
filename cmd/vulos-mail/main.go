@@ -103,6 +103,15 @@ func loadEnv() {
 
 func main() {
 	loadEnv()
+	// Subcommands. `vulos-mail diagnostics` runs the deliverability/health check
+	// suite and prints a report (add --json for machine output); no subcommand runs
+	// the mail server.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "diagnostics", "diag":
+			os.Exit(runDiagnosticsCLI(os.Args[2:]))
+		}
+	}
 	var (
 		dataDir = env("VULOS_DATA_DIR", "./data")
 		domain  = env("VULOS_DOMAIN", "vulos.to")
@@ -752,6 +761,24 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
+	// ── Operations endpoints ─────────────────────────────────────────────────
+	// Broker-gated admin + diagnostics, plus an unauthenticated liveness probe.
+	// These use exact patterns so they take precedence over the "/api/" subtree
+	// handler registered above regardless of ordering.
+	adminBrokerSecret := strings.TrimSpace(env("LILMAIL_BROKER_SECRET", ""))
+	// Free-mail mailbox provisioning seam (used by Cloud's free-org-mail feature).
+	httpMux.HandleFunc("/api/admin/provision-mailbox", provisionMailboxHandler(mgr, domain, adminBrokerSecret))
+	// Liveness for the status page / load balancer.
+	httpMux.HandleFunc("/healthz", healthzHandler)
+	// Advanced deliverability/health diagnostics (broker-gated JSON report).
+	diagRunner := newDiagRunner()
+	httpMux.HandleFunc("/api/diagnostics", diagnosticsHandler(diagRunner, adminBrokerSecret))
+	if adminBrokerSecret == "" {
+		log.Printf("ops: /api/diagnostics and /api/admin/provision-mailbox are CLOSED (set LILMAIL_BROKER_SECRET to enable); /healthz is open")
+	} else {
+		log.Printf("ops: /healthz (open), /api/diagnostics + /api/admin/provision-mailbox (broker-gated)")
+	}
+
 	// Webmail static UI at the root (registered last; longest-prefix routing keeps
 	// the API/DAV/JMAP handlers above taking precedence). The webmail is a
 	// React+Vite SPA built into ./webmail/dist (run `cd webmail && npm run build`).

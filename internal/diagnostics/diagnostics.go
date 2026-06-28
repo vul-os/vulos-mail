@@ -14,6 +14,7 @@ package diagnostics
 
 import (
 	"context"
+	"crypto/x509"
 	"net"
 	"sort"
 	"sync"
@@ -178,6 +179,7 @@ type Runner struct {
 	resolver Resolver
 	dialTLS  TLSDialer
 	prober   Prober
+	rootCAs  *x509.CertPool
 	now      func() time.Time
 
 	mu        sync.Mutex
@@ -215,6 +217,10 @@ func WithProber(p Prober) Option { return func(r *Runner) { r.prober = p } }
 
 // WithClock injects the clock (for tests).
 func WithClock(now func() time.Time) Option { return func(r *Runner) { r.now = now } }
+
+// WithRootCAs injects the trust anchors used for TLS chain verification (default
+// the system pool). Primarily for tests.
+func WithRootCAs(pool *x509.CertPool) Option { return func(r *Runner) { r.rootCAs = pool } }
 
 // Config returns the effective (defaulted) configuration.
 func (r *Runner) Config() Config { return r.cfg }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	"github.com/vul-os/vulos-mail/internal/authlimit"
+	"github.com/vul-os/vulos-mail/internal/diagnostics"
+	"github.com/vul-os/vulos-mail/internal/server"
 )
 
 // A session-holding client must not be able to forge any broker/credential
@@ -277,4 +280,168 @@ func TestTrustedPeer(t *testing.T) {
 	if trustedPeer(mk("203.0.113.1:1"), trusted) {
 		t.Fatal("203.0.113.1 must not be trusted")
 	}
+}
+
+// --- ops endpoints: provisioning, healthz, diagnostics ---
+
+const testBrokerSecret = "s3cret-broker"
+
+func brokerReq(method, path, body, secret string) *http.Request {
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	if secret != "" {
+		r.Header.Set("X-Vulos-Broker-Auth", secret)
+	}
+	return r
+}
+
+// TestProvisionMailboxBrokerGate proves the endpoint is closed without a matching
+// broker secret and creates a mailbox idempotently with one.
+func TestProvisionMailboxBrokerGate(t *testing.T) {
+	mgr := server.NewManager(t.TempDir(), nil, nil) // in-memory creds (Identity nil)
+	h := provisionMailboxHandler(mgr, "vulos.to", testBrokerSecret)
+
+	body := `{"localpart":"alice","domain":"vulos.to","org":"acme"}`
+
+	// No secret -> 401.
+	w := httptest.NewRecorder()
+	h(w, brokerReq(http.MethodPost, "/api/admin/provision-mailbox", body, ""))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("no secret: want 401, got %d", w.Code)
+	}
+
+	// Wrong secret -> 401.
+	w = httptest.NewRecorder()
+	h(w, brokerReq(http.MethodPost, "/api/admin/provision-mailbox", body, "nope"))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong secret: want 401, got %d", w.Code)
+	}
+
+	// Correct secret -> 200, created:true.
+	w = httptest.NewRecorder()
+	h(w, brokerReq(http.MethodPost, "/api/admin/provision-mailbox", body, testBrokerSecret))
+	if w.Code != http.StatusOK {
+		t.Fatalf("provision: want 200, got %d (%s)", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Address string `json:"address"`
+		Created bool   `json:"created"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Address != "alice@vulos.to" || !resp.Created {
+		t.Fatalf("provision resp = %+v, want alice@vulos.to created:true", resp)
+	}
+	if !mgr.IsLocal("alice@vulos.to") {
+		t.Fatal("mailbox not actually provisioned")
+	}
+
+	// Idempotent: second call -> 200, created:false.
+	w = httptest.NewRecorder()
+	h(w, brokerReq(http.MethodPost, "/api/admin/provision-mailbox", body, testBrokerSecret))
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusOK || resp.Created {
+		t.Fatalf("idempotent re-provision: want 200 created:false, got %d %+v", w.Code, resp)
+	}
+}
+
+func TestProvisionMailboxValidation(t *testing.T) {
+	mgr := server.NewManager(t.TempDir(), nil, nil)
+	h := provisionMailboxHandler(mgr, "vulos.to", testBrokerSecret)
+
+	for _, bad := range []string{
+		`{"localpart":"","domain":"vulos.to"}`,
+		`{"localpart":"a@b","domain":"vulos.to"}`,
+		`{"localpart":"has space","domain":"vulos.to"}`,
+	} {
+		w := httptest.NewRecorder()
+		h(w, brokerReq(http.MethodPost, "/api/admin/provision-mailbox", bad, testBrokerSecret))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("body %q: want 400, got %d", bad, w.Code)
+		}
+	}
+
+	// GET is rejected.
+	w := httptest.NewRecorder()
+	h(w, brokerReq(http.MethodGet, "/api/admin/provision-mailbox", "", testBrokerSecret))
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET: want 405, got %d", w.Code)
+	}
+}
+
+func TestProvisionMailboxDefaultDomain(t *testing.T) {
+	mgr := server.NewManager(t.TempDir(), nil, nil)
+	h := provisionMailboxHandler(mgr, "fallback.test", testBrokerSecret)
+	w := httptest.NewRecorder()
+	h(w, brokerReq(http.MethodPost, "/api/admin/provision-mailbox", `{"localpart":"bob"}`, testBrokerSecret))
+	var resp struct {
+		Address string `json:"address"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Address != "bob@fallback.test" {
+		t.Fatalf("default-domain address = %q, want bob@fallback.test", resp.Address)
+	}
+}
+
+func TestHealthz(t *testing.T) {
+	w := httptest.NewRecorder()
+	healthzHandler(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("healthz status = %d, want 200", w.Code)
+	}
+	var resp struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Status != "ok" {
+		t.Fatalf("healthz body status = %q, want ok", resp.Status)
+	}
+}
+
+// TestDiagnosticsHandlerBrokerGate proves the diagnostics endpoint is broker-gated
+// and returns a JSON Report. A disabled runner keeps the test fully offline.
+func TestDiagnosticsHandlerBrokerGate(t *testing.T) {
+	runner := diagnostics.New(diagnostics.Config{Domain: "example.test", Enabled: false})
+	h := diagnosticsHandler(runner, testBrokerSecret)
+
+	// Closed without a matching secret.
+	w := httptest.NewRecorder()
+	h(w, brokerReq(http.MethodGet, "/api/diagnostics", "", ""))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("no secret: want 401, got %d", w.Code)
+	}
+
+	// With the secret, returns a JSON report.
+	w = httptest.NewRecorder()
+	h(w, brokerReq(http.MethodGet, "/api/diagnostics", "", testBrokerSecret))
+	if w.Code != http.StatusOK {
+		t.Fatalf("diagnostics: want 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("content-type = %q", ct)
+	}
+	var rep diagnostics.Report
+	if err := json.Unmarshal(w.Body.Bytes(), &rep); err != nil {
+		t.Fatalf("report not valid JSON: %v", err)
+	}
+	if rep.Domain != "example.test" || rep.Summary.Total != len(rep.Checks) {
+		t.Fatalf("unexpected report shape: %+v", rep)
+	}
+}
+
+// TestDiagnosticsHandlerClosedWhenNoSecret proves an empty configured secret
+// closes the endpoint entirely (no request can pass).
+func TestDiagnosticsHandlerClosedWhenNoSecret(t *testing.T) {
+	runner := diagnostics.New(diagnostics.Config{Domain: "example.test", Enabled: false})
+	h := diagnosticsHandler(runner, "")
+	w := httptest.NewRecorder()
+	h(w, brokerReq(http.MethodGet, "/api/diagnostics", "", "anything"))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("closed endpoint: want 401, got %d", w.Code)
+	}
+	_ = context.Background()
 }
