@@ -37,6 +37,7 @@ import (
 	cloud "github.com/vul-os/vulos-mail/integration/cloud"
 	"github.com/vul-os/vulos-mail/internal/abuse"
 	"github.com/vul-os/vulos-mail/internal/account"
+	"github.com/vul-os/vulos-mail/internal/apikey"
 	mailapps "github.com/vul-os/vulos-mail/internal/apps"
 	"github.com/vul-os/vulos-mail/internal/authlimit"
 	"github.com/vul-os/vulos-mail/internal/blob"
@@ -47,6 +48,7 @@ import (
 	"github.com/vul-os/vulos-mail/internal/llm"
 	"github.com/vul-os/vulos-mail/internal/mailsettings"
 	"github.com/vul-os/vulos-mail/internal/metrics"
+	mailmw "github.com/vul-os/vulos-mail/internal/middleware"
 	"github.com/vul-os/vulos-mail/internal/mime"
 	"github.com/vul-os/vulos-mail/internal/scan"
 	"github.com/vul-os/vulos-mail/internal/seam"
@@ -249,6 +251,16 @@ func main() {
 		log.Printf("identity/billing: vulos-cloud control plane (%s)", cp)
 	} else {
 		log.Printf("identity/billing: standalone (local account store, no cloud)")
+	}
+	// vk_ API-key auth seam for the /v1 API. Enabled only when VULOS_CP_BASE_URL
+	// is set; when unset the key path is disabled and /v1 falls back to
+	// session-only auth (self-host unchanged). Uses the same shared CP
+	// introspection contract as vulos-office and every other product in the suite.
+	vkIntro := apikey.NewIntrospector(apikey.FromEnv())
+	if vkIntro != nil {
+		log.Printf("vk_ API key auth: enabled (CP: %s)", apikey.FromEnv().BaseURL)
+	} else {
+		log.Printf("vk_ API key auth: disabled (set VULOS_CP_BASE_URL to enable developer keys on /v1)")
 	}
 	// Seed the configured account (config is authoritative across restarts). Skip
 	// when cloud owns identity.
@@ -630,23 +642,48 @@ func main() {
 			baseDirector(req)
 			req.Host = target.Host
 		}
-		httpMux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
-			sess, ok := webSessions.get(cookieValue(r, webSessionCookie))
-			if !ok {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
-				_, _ = w.Write([]byte(`{"error":"not authenticated"}`))
+		// sessionAuth resolves the webmail session cookie for the /v1 middleware.
+		sessionAuth := func(r *http.Request) (account, secret string, ok bool) {
+			tok := cookieValue(r, webSessionCookie)
+			sess, sessOK := webSessions.get(tok)
+			if !sessOK {
+				return "", "", false
+			}
+			return sess.user, tok, true
+		}
+		// v1Handler is the downstream handler for authenticated /v1 requests. It
+		// dispatches on auth method to inject the correct set of broker headers
+		// before forwarding to the lilmail engine.
+		v1Handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			auth, authOK := mailmw.GetV1Auth(r.Context())
+			if !authOK {
+				// Unreachable when V1Auth middleware ran correctly, but be safe.
+				writeJSONErr(w, http.StatusUnauthorized, "authentication required")
 				return
 			}
 			// Never forward the browser's cookies/auth, and never let a client
 			// spoof the broker headers — strip the full inbound credential set
 			// (incl. the broker gate and the CalDAV/CardDAV base URLs) and then
-			// set them fresh from the validated session.
+			// set them fresh from the validated identity.
 			r.Header.Del("Cookie")
 			r.Header.Del("Authorization")
-			injectBrokerHeaders(r.Header, brokerSecret, sess.user, sess.pass, imapHost, imapPort, smtpHost, smtpPort, caldavURL, carddavURL)
+			switch auth.Method {
+			case "apikey":
+				// API-key path: present the vk_ key to the engine as the auth
+				// secret (X-Vulos-Mail-Auth: apikey). The engine validates it
+				// against the same CP introspection endpoint in cloud mode.
+				injectAPIKeyBrokerHeaders(r.Header, brokerSecret, auth.Account, auth.Secret, imapHost, imapPort, smtpHost, smtpPort, caldavURL, carddavURL)
+			default: // "session"
+				sess, ok := webSessions.get(auth.Secret)
+				if !ok {
+					writeJSONErr(w, http.StatusUnauthorized, "session expired")
+					return
+				}
+				injectBrokerHeaders(r.Header, brokerSecret, sess.user, sess.pass, imapHost, imapPort, smtpHost, smtpPort, caldavURL, carddavURL)
+			}
 			proxy.ServeHTTP(w, r)
 		})
+		httpMux.Handle("/v1/", mailmw.V1Auth(vkIntro, sessionAuth, v1Handler))
 		if caldavURL != "" || carddavURL != "" {
 			log.Printf("webmail: brokering DAV base URLs to engine (caldav=%q carddav=%q)", caldavURL, carddavURL)
 		}
@@ -1086,6 +1123,35 @@ func injectBrokerHeaders(h http.Header, brokerSecret, user, pass, imapHost, imap
 	h.Set("X-Vulos-Mail-Smtp-Port", smtpPort)
 	// Trusted, operator-configured DAV base URLs only (config-gated). Stripped
 	// above when unset so client-forged values never reach the engine.
+	if caldavURL != "" {
+		h.Set("X-Vulos-Mail-Caldav-Url", caldavURL)
+	}
+	if carddavURL != "" {
+		h.Set("X-Vulos-Mail-Carddav-Url", carddavURL)
+	}
+}
+
+// injectAPIKeyBrokerHeaders strips the inbound broker/credential header set and
+// sets the trusted values for a vk_ API-key-authenticated /v1 request. The raw
+// API key is presented to the lilmail engine as X-Vulos-Mail-Secret with
+// X-Vulos-Mail-Auth: apikey so the engine can validate it against the same CP
+// introspection endpoint (cloud mode). The account email comes from the CP
+// introspection result and is trusted; it is never taken from client input.
+func injectAPIKeyBrokerHeaders(h http.Header, brokerSecret, account, apiKey, imapHost, imapPort, smtpHost, smtpPort, caldavURL, carddavURL string) {
+	for _, hdr := range mailBrokerHeaders {
+		h.Del(hdr)
+	}
+	h.Set("X-Vulos-Broker-Auth", brokerSecret)
+	h.Set("X-Vulos-Mail-Provider", "imap")
+	h.Set("X-Vulos-Mail-Email", account)
+	h.Set("X-Vulos-Mail-Username", account)
+	h.Set("X-Vulos-Mail-Auth", "apikey")
+	h.Set("X-Vulos-Mail-Secret", apiKey)
+	h.Set("X-Vulos-Mail-Imap-Host", imapHost)
+	h.Set("X-Vulos-Mail-Imap-Port", imapPort)
+	h.Set("X-Vulos-Mail-Smtp-Host", smtpHost)
+	h.Set("X-Vulos-Mail-Smtp-Port", smtpPort)
+	// Trusted, operator-configured DAV base URLs only (config-gated).
 	if caldavURL != "" {
 		h.Set("X-Vulos-Mail-Caldav-Url", caldavURL)
 	}
