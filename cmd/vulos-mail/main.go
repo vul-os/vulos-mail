@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 	"io/fs"
@@ -57,6 +58,9 @@ import (
 	"github.com/vul-os/vulos-mail/internal/tlsconf"
 	"github.com/vul-os/vulos-mail/services/mtaout"
 )
+
+// Version is set at build time via -ldflags "-X main.Version=x.y.z".
+var Version = "dev"
 
 func env(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -109,6 +113,11 @@ func main() {
 	// the mail server.
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "--version", "version":
+			fmt.Println(Version)
+			os.Exit(0)
+		case "migrate":
+			os.Exit(runMigrate(os.Args[2:]))
 		case "diagnostics", "diag":
 			os.Exit(runDiagnosticsCLI(os.Args[2:]))
 		}

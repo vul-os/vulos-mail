@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+
+    # Clone the sibling modules that go.mod's local `replace` directives point
+    # at, so the module graph resolves them from disk (../<repo>) in CI.
+    - name: Clone sibling replace targets
+      run: |
+        git clone --depth 1 https://github.com/vul-os/vulos-apps ../vulos-apps
+        git clone --depth 1 https://github.com/vul-os/vulos-deliver ../vulos-deliver
+
+    - name: Run tests
+      run: go test ./...
+
+    - name: Verify tag matches declared version
+      run: |
+        TAG="${GITHUB_REF_NAME}"            # e.g. v1.9.0
+        VERSION="${TAG#v}"                  # strip leading 'v' → 1.9.0
+        # Build with the real version injected so `version` prints the tag value.
+        go build -ldflags "-X main.Version=${VERSION}" -o /tmp/vulos-mail-check ./cmd/vulos-mail
+        BIN_VER=$(/tmp/vulos-mail-check version | awk '{print $1}')
+        if [ "${BIN_VER}" != "${VERSION}" ]; then
+          echo "ERROR: binary reports version '${BIN_VER}' but tag is '${TAG}'"
+          exit 1
+        fi
+        echo "Version check passed: ${VERSION}"
+
+    - name: Build release binaries
+      run: |
+        TAG="${GITHUB_REF_NAME}"
+        VERSION="${TAG#v}"
+        LDFLAGS="-s -w -X main.Version=${VERSION}"   # strip symbols/DWARF — smaller binary
+        mkdir -p builds/vulos-mail
+
+        # linux/amd64
+        GOOS=linux GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o builds/vulos-mail/vulos-mail ./cmd/vulos-mail
+        cd builds && zip -r "vulos-mail_${VERSION}_linux_amd64.zip" vulos-mail/ && cd ..
+        rm builds/vulos-mail/vulos-mail
+
+        # linux/arm64
+        GOOS=linux GOARCH=arm64 go build -ldflags "${LDFLAGS}" -o builds/vulos-mail/vulos-mail ./cmd/vulos-mail
+        cd builds && zip -r "vulos-mail_${VERSION}_linux_arm64.zip" vulos-mail/ && cd ..
+        rm builds/vulos-mail/vulos-mail
+
+        # darwin/amd64
+        GOOS=darwin GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o builds/vulos-mail/vulos-mail ./cmd/vulos-mail
+        cd builds && zip -r "vulos-mail_${VERSION}_darwin_amd64.zip" vulos-mail/ && cd ..
+        rm builds/vulos-mail/vulos-mail
+
+        # darwin/arm64 (Apple Silicon)
+        GOOS=darwin GOARCH=arm64 go build -ldflags "${LDFLAGS}" -o builds/vulos-mail/vulos-mail ./cmd/vulos-mail
+        cd builds && zip -r "vulos-mail_${VERSION}_darwin_arm64.zip" vulos-mail/ && cd ..
+        rm builds/vulos-mail/vulos-mail
+
+        # Source archive
+        git archive --format=zip HEAD -o "builds/vulos-mail_${VERSION}_source.zip"
+
+        # Clean up staging dir
+        rm -rf builds/vulos-mail
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: builds/*
+        generate_release_notes: true
