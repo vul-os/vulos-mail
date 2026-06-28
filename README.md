@@ -127,27 +127,23 @@ docker run -p 2080:2080 -p 2525:2525 -p 2587:2587 -p 2143:2143 \
 
 ## How it works
 
-```
-              ┌──────────── single Go binary (cmd/vulos-mail) ────────────┐
-  clients ───▶│  SMTP :2525   Submission :2587   IMAP :2143               │
-              │  HTTP :2080 ── JMAP /jmap/*  ·  CalDAV  ·  CardDAV         │
-              │              ── /api/webmail/{login,logout,send}           │
-              │              ── /v1/*  reverse-proxy ─▶ lilmail engine ┐   │
-              │              ── /api/signup(+/challenge)  (Altcha PoW)  │   │
-              │              ── /  static React webmail (webmail/dist)  │   │
-              └─────────────────────────────┬───────────────────────────┘  │
-                                            │                              │
-              event-sourced core  ── append-only JSONL log / SQLite       │
-                                  ── blobs: local FS / S3-MinIO            │
-                                  ── DKIM, accounts.json (bcrypt)          │
-                                            ▲                              │
-                                            │ IMAP/SMTP (brokered creds)   │
-                          lilmail engine ◀──┴──────────────────────────────┘
-                          (LILMAIL_ENGINE_URL) — the mail client engine
+```mermaid
+flowchart TD
+    clients["clients"] --> binary
 
-  optional vulos-cloud seam (internal/seam): identity · entitlements ·
-  usage · signup-gate — wired only by cmd/* when VULOS_CP_URL is set.
-  The mail core has zero imports of integration/cloud.
+    subgraph binary["single Go binary (cmd/vulos-mail)"]
+        proto["SMTP :2525 · Submission :2587 · IMAP :2143"]
+        http["HTTP :2080 — JMAP /jmap/* · CalDAV · CardDAV"]
+        webapi["/api/webmail/{login,logout,send}"]
+        v1["/v1/* reverse-proxy"]
+        signup["/api/signup (+/challenge) (Altcha PoW)"]
+        static["/ static React webmail (webmail/dist)"]
+    end
+
+    binary --> core["event-sourced core:<br/>append-only JSONL log / SQLite<br/>blobs: local FS / S3-MinIO<br/>DKIM, accounts.json (bcrypt)"]
+    v1 --> engine["lilmail engine (LILMAIL_ENGINE_URL)<br/>— the mail client engine"]
+    engine -->|"IMAP/SMTP (brokered creds)"| core
+    binary -.->|"opt-in when VULOS_CP_URL is set"| seam["optional vulos-cloud seam (internal/seam):<br/>identity · entitlements · usage · signup-gate<br/>— wired only by cmd/*. The mail core has zero imports of integration/cloud."]
 ```
 
 The webmail is a static SPA that mounts the shared `@vulos/mail-ui`
