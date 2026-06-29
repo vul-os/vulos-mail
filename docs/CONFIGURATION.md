@@ -42,7 +42,7 @@ The diagnostics SMTP/IMAP endpoints reuse the server's connection settings:
 |----------|---------|----------|
 | `VULOS_MAIL_SMTP_HOST` / `VULOS_MAIL_SMTP_PORT` | `<domain>` / `587` | `tls.smtp` STARTTLS probe + round-trip submission |
 | `VULOS_MAIL_IMAP_HOST` / `VULOS_MAIL_IMAP_PORT` | `<domain>` / `993` | `tls.imap` probe + round-trip IMAP poll |
-| `VULOS_DOMAIN` | `vulos.to` | Domain under test (MX/SPF/DKIM/DMARC/A keyed on it) |
+| `VULOS_DOMAIN` | `vulos.net` | Domain under test (MX/SPF/DKIM/DMARC/A keyed on it) |
 
 ### Example
 

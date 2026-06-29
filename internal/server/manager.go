@@ -15,6 +15,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/mail"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/vul-os/vulos-mail/internal/abuse"
 	"github.com/vul-os/vulos-mail/internal/account"
 	"github.com/vul-os/vulos-mail/internal/blob"
 	"github.com/vul-os/vulos-mail/internal/compose"
@@ -62,6 +64,10 @@ type Manager struct {
 	// Settings + Vacation, if set, drive the vacation auto-responder on delivery.
 	Settings *mailsettings.Store
 	Vacation *mailsettings.Responder
+
+	// Abuse, if set, gates every outbound send path (SMTP submission, JMAP, webapi)
+	// with rate + recipient-burst checks. nil = no outbound abuse gating.
+	Abuse *abuse.Filter
 
 	// Identity, if set, replaces the built-in in-memory credential map as the
 	// source of truth for authentication, account existence, and provisioning.
@@ -561,6 +567,14 @@ func (m *Manager) SendRaw(_ context.Context, from string, to []string, raw []byt
 	}
 	if err := m.CheckQuota(from, len(raw)); err != nil {
 		return err
+	}
+	// Abuse gate: enforce outbound rate + recipient-burst limits across all send
+	// paths (JMAP EmailSubmission, webapi, webmail) — mirrors the check the SMTP
+	// submission backend runs on authenticated submissions.
+	if m.Abuse != nil {
+		if act, reason := m.Abuse.Check(from, len(to)); act != abuse.Allow {
+			return fmt.Errorf("send rejected by outbound abuse filter: %s", reason)
+		}
 	}
 	if m.Signer != nil {
 		if signed, err := m.Signer.Sign(tenantOf(from), raw); err == nil {

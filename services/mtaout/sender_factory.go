@@ -20,6 +20,13 @@ type SenderConfig struct {
 	// built-in SMTP sender. Ignored when DeliverBackend is set.
 	HELO string
 
+	// STARTTLSEnforce, if true, causes the built-in SMTP sender to fail
+	// (TempFail, retriable) when the remote MX does not advertise STARTTLS.
+	// Default (false): opportunistic — STARTTLS is negotiated when offered.
+	// Set via the STARTTLS_ENFORCE environment variable. Ignored when
+	// DeliverBackend is set (managed delivery handles transport security).
+	STARTTLSEnforce bool
+
 	// DeliverBackend selects the vulos-deliver backend: "ses" or "smtp".
 	// Leave empty to use the built-in direct-SMTP path (default).
 	// Set via the DELIVER_BACKEND environment variable.
@@ -44,7 +51,7 @@ type SenderConfig struct {
 func NewSender(cfg SenderConfig) (Sender, error) {
 	if cfg.DeliverBackend == "" {
 		// Default: built-in direct-SMTP path. No external deps.
-		return &SMTPSender{HELO: cfg.HELO}, nil
+		return &SMTPSender{HELO: cfg.HELO, STARTTLSEnforce: cfg.STARTTLSEnforce}, nil
 	}
 
 	pcfg := provider.Config{

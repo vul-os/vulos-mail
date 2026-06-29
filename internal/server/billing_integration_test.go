@@ -141,11 +141,11 @@ func hasUsageKind(events []map[string]any, kind string) bool {
 // proPlan builds a plan response with the given per-day cap and storage limit.
 func proPlan(maxSendPerDay int, maxBytes int64, suspended bool) map[string]any {
 	return map[string]any{
-		"tier":            "pro",
+		"tier":             "pro",
 		"max_send_per_day": maxSendPerDay,
-		"max_bytes":       maxBytes,
-		"max_addresses":   5,
-		"suspended":       suspended,
+		"max_bytes":        maxBytes,
+		"max_addresses":    5,
+		"suspended":        suspended,
 	}
 }
 
@@ -248,11 +248,11 @@ func TestBillingIntegration(t *testing.T) {
 		// Allow exactly one message (cap is slightly above one message size).
 		cap := int64(len(msg)) + 100
 		stub.setPlan(map[string]any{
-			"tier":            "pro",
+			"tier":             "pro",
 			"max_send_per_day": 100,
-			"max_bytes":       cap,
-			"max_addresses":   5,
-			"suspended":       false,
+			"max_bytes":        cap,
+			"max_addresses":    5,
+			"suspended":        false,
 		})
 		mgr := newBillingMgr(t, stub, srv.URL)
 		_ = mgr.AddAccount("eve@vulos.to", "pw")

@@ -171,7 +171,7 @@ All configuration is via environment variables. Common ones:
 
 | Env | Default | Purpose |
 |---|---|---|
-| `VULOS_DOMAIN` | `vulos.to` | the mail domain |
+| `VULOS_DOMAIN` | `vulos.net` | the mail domain |
 | `VULOS_DATA_DIR` | `./data` | data root (event log, blobs, accounts, DKIM) |
 | `VULOS_ACCOUNT` / `VULOS_PASSWORD` | — | provision one seed account at startup |
 | `VULOS_WEBMAIL_DIR` | `./webmail/dist` | static webmail directory to serve |

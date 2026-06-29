@@ -37,7 +37,7 @@ append-only JSONL. No database server, no cloud, no third-party API.
 
 | Env | Purpose |
 |---|---|
-| `VULOS_DOMAIN` | the mail domain (default `vulos.to`) |
+| `VULOS_DOMAIN` | the mail domain (default `vulos.net`) |
 | `VULOS_DATA_DIR` | data root (logs, blobs, accounts, DKIM) |
 | `VULOS_TLS_CERT` / `VULOS_TLS_KEY` | bring-your-own TLS |
 | `VULOS_ACME_DOMAINS` | Let's Encrypt via ACME (HTTP-01 on :80) |

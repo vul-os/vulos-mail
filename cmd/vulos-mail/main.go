@@ -205,12 +205,13 @@ func main() {
 	rep := mtaout.NewReputation(100, 0.10, 0.02)
 	warm := mtaout.NewWarmup([]int{50, 100, 500, 1000, 5000, 10000, 50000})
 	outSender, err := mtaout.NewSender(mtaout.SenderConfig{
-		HELO:           domain,
-		DeliverBackend: env("DELIVER_BACKEND", ""),
-		SESRegion:      env("DELIVER_SES_REGION", ""),
-		SESKey:         env("DELIVER_SES_KEY", ""),
-		SESSecret:      env("DELIVER_SES_SECRET", ""),
-		SESConfigSet:   env("DELIVER_SES_CONFIG_SET", ""),
+		HELO:            domain,
+		STARTTLSEnforce: env("STARTTLS_ENFORCE", "") != "",
+		DeliverBackend:  env("DELIVER_BACKEND", ""),
+		SESRegion:       env("DELIVER_SES_REGION", ""),
+		SESKey:          env("DELIVER_SES_KEY", ""),
+		SESSecret:       env("DELIVER_SES_SECRET", ""),
+		SESConfigSet:    env("DELIVER_SES_CONFIG_SET", ""),
 	})
 	if err != nil {
 		log.Fatalf("outbound sender: %v", err)
@@ -319,7 +320,9 @@ func main() {
 	}
 
 	// Outbound abuse filter (rate + recipient-burst auto-suspend).
+	// Wire onto Manager so all send paths (SMTP submission, JMAP, webapi) share the gate.
 	abuseFilter := abuse.New(abuse.Config{})
+	mgr.Abuse = abuseFilter
 
 	// Inbound credential-check brute-force limiter, shared across IMAP, SMTP
 	// submission, JMAP Basic auth, AND the webmail HTTP auth endpoints (login,
@@ -392,7 +395,7 @@ func main() {
 	carddavBe := &carddav.Backend{Auth: carddav.Auth(davAuth), Store: contactStore}
 	apiKey := env("VULOS_API_KEY", "")
 	webapiBe := &webapi.Backend{
-		AuthKey: func(k string) (string, bool) { return acct, apiKey != "" && k == apiKey },
+		AuthKey: func(k string) (string, bool) { return acct, checkAPIKey(k, apiKey) },
 		Submit:  mgr.SendRaw,
 	}
 
@@ -980,8 +983,10 @@ func main() {
 		}
 	}()
 
-	// Metrics endpoint.
-	if metricsAddr := env("VULOS_METRICS_ADDR", ":2090"); metricsAddr != "" {
+	// Metrics endpoint — bound to loopback by default so Prometheus scrape data is
+	// not exposed on the public interface. Override with VULOS_METRICS_ADDR when
+	// the scraper runs on a different host (e.g. "0.0.0.0:9090" in a container).
+	if metricsAddr := env("VULOS_METRICS_ADDR", "127.0.0.1:2090"); metricsAddr != "" {
 		go serve("metrics", metricsAddr, func() error {
 			mux := http.NewServeMux()
 			mux.Handle("/metrics", metrics.Handler())

@@ -51,13 +51,13 @@ X-Vulos-Broker-Auth: <LILMAIL_BROKER_SECRET>
 
 ```json
 {
-  "domain": "vulos.to",
+  "domain": "vulos.net",
   "generatedAt": "2026-06-28T12:00:00Z",
   "status": "ok",
   "summary": { "ok": 9, "warn": 0, "fail": 0, "total": 9 },
   "checks": [
     { "id": "dns.mx", "title": "MX records", "status": "ok",
-      "detail": "1 MX record(s) published", "value": "10 mx.vulos.to", "latencyMs": 8 }
+      "detail": "1 MX record(s) published", "value": "10 mx.vulos.net", "latencyMs": 8 }
   ]
 }
 ```
@@ -84,7 +84,7 @@ Content-Type: application/json
 ```json
 {
   "localpart": "alice",
-  "domain": "vulos.to",
+  "domain": "vulos.net",
   "org": "acme",
   "password": "optional-explicit-password"
 }
@@ -100,7 +100,7 @@ Content-Type: application/json
 **Response** `200`:
 
 ```json
-{ "address": "alice@vulos.to", "created": true }
+{ "address": "alice@vulos.net", "created": true }
 ```
 
 `created` is `false` when the mailbox already existed (idempotent re-provision).
@@ -153,7 +153,7 @@ Content-Type: application/json
 
 ```json
 {
-  "account": "alice@vulos.to",
+  "account": "alice@vulos.net",
   "vcards": [
     "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:abc-123\r\nFN:Bob Smith\r\nEMAIL:bob@example.com\r\nEND:VCARD\r\n",
     "BEGIN:VCARD\r\n..."
@@ -203,7 +203,7 @@ Content-Type: application/json
 
 ```json
 {
-  "account": "alice@vulos.to",
+  "account": "alice@vulos.net",
   "events": [
     "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//vulos//import//EN\r\nBEGIN:VEVENT\r\nUID:evt-001\r\nSUMMARY:Team sync\r\nDTSTART:20260628T100000Z\r\nDTEND:20260628T110000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
     "BEGIN:VCALENDAR\r\n..."
