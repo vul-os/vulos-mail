@@ -62,7 +62,9 @@ type Manager struct {
 	Registry *tenant.Registry
 	Quota    *tenant.Quota
 	// Settings + Vacation, if set, drive the vacation auto-responder on delivery.
-	Settings *mailsettings.Store
+	// Settings is satisfied by either the in-memory *mailsettings.Store (default)
+	// or the Postgres-backed *mailpg.PGSettings (cloud, when DATABASE_URL is set).
+	Settings mailsettings.SettingsStore
 	Vacation *mailsettings.Responder
 
 	// Abuse, if set, gates every outbound send path (SMTP submission, JMAP, webapi)

@@ -26,6 +26,8 @@ import (
 	"sync"
 	"time"
 
+	"database/sql"
+
 	appsplatform "github.com/vul-os/vulos-apps/appsplatform"
 	"github.com/vul-os/vulos-apps/mcp"
 	imapadapter "github.com/vul-os/vulos-mail/adapters/imap"
@@ -46,6 +48,7 @@ import (
 	"github.com/vul-os/vulos-mail/internal/eventlog"
 	"github.com/vul-os/vulos-mail/internal/filter"
 	"github.com/vul-os/vulos-mail/internal/llm"
+	"github.com/vul-os/vulos-mail/internal/mailpg"
 	"github.com/vul-os/vulos-mail/internal/mailsettings"
 	"github.com/vul-os/vulos-mail/internal/metrics"
 	mailmw "github.com/vul-os/vulos-mail/internal/middleware"
@@ -227,7 +230,27 @@ func main() {
 	})
 
 	mgr := server.NewManager(dataDir, blobs, sched)
-	if env("VULOS_DB", "") == "sqlite" {
+
+	// ── Postgres / Neon backend (cloud consolidation) ────────────────────────
+	// When DATABASE_URL or VULOS_DATABASE_URL is set, the mail event log,
+	// per-account settings, and webmail sessions are backed by Postgres in the
+	// dedicated "mail" schema of the shared Neon database.  Message bodies
+	// continue to live in object storage (Tigris/S3/FS) unchanged.
+	// When neither variable is set the JSONL/SQLite defaults are used, keeping
+	// single-binary self-host behaviour intact.
+	var pgDB *sql.DB
+	if dsn := mailpg.DSN(); dsn != "" {
+		var pgErr error
+		pgDB, pgErr = mailpg.Open(dsn)
+		if pgErr != nil {
+			log.Fatalf("postgres: %v", pgErr)
+		}
+		if pgErr = mailpg.Migrate(context.Background(), pgDB); pgErr != nil {
+			log.Fatalf("postgres migrate: %v", pgErr)
+		}
+		mgr.LogOpen = mailpg.LogOpener(pgDB, nil)
+		log.Printf("event log backend: postgres (schema=mail)")
+	} else if env("VULOS_DB", "") == "sqlite" {
 		mgr.LogOpen = func(d string) (eventlog.Log, error) { return eventlog.OpenSQLite(filepath.Join(d, "log.db"), nil) }
 		log.Printf("event log backend: sqlite")
 	}
@@ -307,7 +330,11 @@ func main() {
 	mgr.Inbound = chain
 
 	// Account settings + vacation responder.
+	// Default: in-memory store.  Swapped for PG-backed store when DATABASE_URL is set.
 	mgr.Settings = mailsettings.NewStore()
+	if pgDB != nil {
+		mgr.Settings = mailpg.NewPGSettings(pgDB)
+	}
 	mgr.Vacation = mailsettings.NewResponder(0, nil)
 
 	// Multi-tenancy: registry + optional per-tenant daily message quota.
@@ -467,7 +494,12 @@ func main() {
 	// held server-side in the session (never in the browser) so the /v1 proxy can
 	// present it to the engine as broker headers on every request. The mail-ui's
 	// own /v1 calls ride that cookie (credentials: 'include').
-	webSessions := newWebSessionStore(12 * time.Hour)
+	// Web session store: default in-memory; swapped for Postgres when DATABASE_URL
+	// is set so sessions survive restarts in multi-replica cloud deployments.
+	var webSessions sessionStore = newWebSessionStore(12 * time.Hour)
+	if pgDB != nil {
+		webSessions = &pgSessionAdapter{pg: mailpg.NewPGSessionStore(pgDB, 12*time.Hour)}
+	}
 	// The session cookie must be Secure whenever the browser↔server hop is HTTPS.
 	// That hop is HTTPS when we terminate TLS ourselves (tlsCfg != nil), when TLS
 	// is terminated by a trusted upstream proxy (X-Forwarded-Proto: https from a
@@ -1079,6 +1111,41 @@ func (s *webSessionStore) setPass(tok, pass string) {
 	}
 }
 
+// sessionStore is the interface for web-session storage, satisfied by both
+// the in-memory webSessionStore (default / self-host) and the Postgres-backed
+// pgSessionAdapter (cloud, when DATABASE_URL is set).
+type sessionStore interface {
+	create(user, pass string) string
+	get(tok string) (webSession, bool)
+	delete(tok string)
+	setPass(tok, pass string)
+}
+
+// pgSessionAdapter adapts mailpg.PGSessionStore to the sessionStore interface
+// so that main.go's call sites (which expect webSession structs) work without
+// change regardless of the backing store.
+type pgSessionAdapter struct {
+	pg *mailpg.PGSessionStore
+}
+
+func (a *pgSessionAdapter) create(user, pass string) string {
+	return a.pg.Create(user, pass)
+}
+
+func (a *pgSessionAdapter) get(tok string) (webSession, bool) {
+	user, pass, ok := a.pg.Get(tok)
+	if !ok {
+		return webSession{}, false
+	}
+	// expires is not returned by PGSessionStore.Get (the DB handles TTL); set a
+	// non-zero value so callers that inspect it see a valid session.
+	return webSession{user: user, pass: pass, expires: time.Now().Add(time.Hour)}, true
+}
+
+func (a *pgSessionAdapter) delete(tok string) { a.pg.Delete(tok) }
+
+func (a *pgSessionAdapter) setPass(tok, pass string) { a.pg.SetPass(tok, pass) }
+
 // writeJSONErr writes a JSON {"error": msg} body with the given status code.
 func writeJSONErr(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
@@ -1214,7 +1281,7 @@ func (g *authGuard) success(ip, account string) {
 // mailbox credentials (Basic auth or JSON body) under the brute-force guard,
 // then mints a session cookie holding them server-side for the /v1 proxy. It is a
 // standalone constructor so the rate-limited auth path is unit-testable.
-func webmailLoginHandler(sessions *webSessionStore, authIMAP func(user, pass string) error, guard *authGuard, setCookie func(http.ResponseWriter, *http.Request, string, int)) http.HandlerFunc {
+func webmailLoginHandler(sessions sessionStore, authIMAP func(user, pass string) error, guard *authGuard, setCookie func(http.ResponseWriter, *http.Request, string, int)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

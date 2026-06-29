@@ -4,22 +4,21 @@ package main
 //
 // Usage:
 //
-//	vulos-mail migrate up     — confirm the storage backend is ready.
-//	                            vulos-mail is schemaless (JSONL) or self-
-//	                            bootstrapping (SQLite), so this verifies the
-//	                            data directory is accessible and exits 0.
-//	vulos-mail migrate status — report the active event-log backend and the
-//	                            state of the data directory.
-//
-// Both JSONL and SQLite backends apply their schema at startup (JSONL is
-// schemaless; SQLite uses CREATE TABLE IF NOT EXISTS on every open), so
-// "migrate up" is always a no-op — it is an operator readiness probe, not
-// a DDL runner.
+//	vulos-mail migrate up     — apply/verify the storage backend.
+//	                            JSONL and SQLite are schemaless/self-bootstrapping
+//	                            (reachability check only).  When DATABASE_URL /
+//	                            VULOS_DATABASE_URL is set, the Postgres "mail"
+//	                            schema DDL is applied idempotently (safe to run
+//	                            on every deploy).
+//	vulos-mail migrate status — report the active event-log backend.
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+
+	"github.com/vul-os/vulos-mail/internal/mailpg"
 )
 
 // runMigrate is the entry point for the `migrate` subcommand.
@@ -35,7 +34,9 @@ func runMigrate(args []string) int {
 	}
 
 	backend := "jsonl"
-	if env("VULOS_DB", "") == "sqlite" {
+	if mailpg.DSN() != "" {
+		backend = "postgres"
+	} else if env("VULOS_DB", "") == "sqlite" {
 		backend = "sqlite"
 	}
 
@@ -50,17 +51,28 @@ func runMigrate(args []string) int {
 	}
 }
 
-// mailMigrateUp confirms the storage layer is accessible.
-// For vulos-mail both backends are schemaless / self-bootstrapping, so this is
-// a reachability check: it ensures the data directory can be created and exits 0.
+// mailMigrateUp applies/verifies the storage layer.
 func mailMigrateUp(dataDir, backend string) int {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "migrate up: create data dir %q: %v\n", dataDir, err)
 		return 1
 	}
 	switch backend {
+	case "postgres":
+		dsn := mailpg.DSN()
+		db, err := mailpg.Open(dsn)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "migrate up: postgres open: %v\n", err)
+			return 1
+		}
+		defer db.Close()
+		if err := mailpg.Migrate(context.Background(), db); err != nil {
+			fmt.Fprintf(os.Stderr, "migrate up: postgres migrate: %v\n", err)
+			return 1
+		}
+		fmt.Printf("migrate up: postgres — schema=mail applied (idempotent); data dir %s ok\n", dataDir)
 	case "sqlite":
-		fmt.Printf("migrate up: sqlite eventlog — schema is applied per-account at first open "+
+		fmt.Printf("migrate up: sqlite eventlog — schema applied per-account at first open "+
 			"(CREATE TABLE IF NOT EXISTS); data dir %s ok\n", dataDir)
 	default:
 		fmt.Printf("migrate up: jsonl eventlog — schemaless; data dir %s ok\n", dataDir)
@@ -71,7 +83,6 @@ func mailMigrateUp(dataDir, backend string) int {
 // mailMigrateStatus prints the active backend and data-directory reachability.
 func mailMigrateStatus(dataDir, backend string) int {
 	fmt.Printf("%-30s %s\n", "COMPONENT", "STATUS")
-
 	fmt.Printf("%-30s %s\n", "eventlog_backend", backend)
 
 	dirStatus := "ok"
@@ -81,9 +92,11 @@ func mailMigrateStatus(dataDir, backend string) int {
 	fmt.Printf("%-30s %s\n", "data_dir", dirStatus)
 
 	switch backend {
+	case "postgres":
+		fmt.Printf("%-30s %s\n", "postgres_schema", "mail (events, snapshots, settings, sessions)")
+		fmt.Printf("%-30s %s\n", "blob_store", "object storage (unchanged — bodies never in PG)")
 	case "sqlite":
-		fmt.Printf("%-30s %s\n", "sqlite_schema",
-			"applied per-account at first open (idempotent)")
+		fmt.Printf("%-30s %s\n", "sqlite_schema", "applied per-account at first open (idempotent)")
 	default:
 		fmt.Printf("%-30s %s\n", "jsonl_schema", "schemaless — no migrations needed")
 	}

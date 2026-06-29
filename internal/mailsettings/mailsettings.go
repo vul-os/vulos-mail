@@ -26,6 +26,14 @@ type Settings struct {
 	HomeRegion string // storage-cell identifier; empty means "eu" (Phase-0 default)
 }
 
+// SettingsStore is the interface for per-account settings persistence.
+// The in-memory Store and the Postgres-backed mailpg.PGSettings both satisfy
+// this interface, allowing the manager to swap backends without change.
+type SettingsStore interface {
+	Get(account string) Settings
+	Set(account string, s Settings)
+}
+
 // Store keeps per-account settings (in-memory; a persisted backend is a later
 // swap behind this type).
 type Store struct {
