@@ -123,3 +123,41 @@ func TestMXEnforcesDMARCReject(t *testing.T) {
 		t.Fatalf("annotate-only fail should be delivered once, got %d", delivered)
 	}
 }
+
+// A DMARC p=quarantine failure is accepted but routed to Junk (DeliverJunk),
+// not the inbox — and a transient (Defer) verdict is refused with a 4xx.
+func TestMXQuarantineRoutesToJunkAndDefer(t *testing.T) {
+	var inbox, junk int
+	be := &smtpin.Backend{
+		Deliver:     func(context.Context, string, []byte) error { inbox++; return nil },
+		DeliverJunk: func(context.Context, string, []byte) error { junk++; return nil },
+		AuthServID:  "mx.vulos.to",
+		VerifyVerdict: func([]byte, net.IP, string, string) smtpin.AuthVerdict {
+			return smtpin.AuthVerdict{AuthResults: "dmarc=fail header.from=evil.example", Quarantine: true}
+		},
+	}
+	sess, _ := be.NewSession(nil)
+	_ = sess.Mail("a@evil.example", nil)
+	_ = sess.Rcpt("c@vulos.to", nil)
+	if err := sess.Data(strings.NewReader("From: a@evil.example\r\nSubject: x\r\n\r\nbody\r\n")); err != nil {
+		t.Fatalf("quarantine should be accepted, got %v", err)
+	}
+	if junk != 1 || inbox != 0 {
+		t.Fatalf("quarantine must go to Junk: inbox=%d junk=%d, want 0,1", inbox, junk)
+	}
+
+	// Defer (e.g. DMARC temperror) → 4xx, nothing delivered.
+	be.VerifyVerdict = func([]byte, net.IP, string, string) smtpin.AuthVerdict {
+		return smtpin.AuthVerdict{AuthResults: "dmarc=temperror", Defer: true}
+	}
+	sess2, _ := be.NewSession(nil)
+	_ = sess2.Mail("a@evil.example", nil)
+	_ = sess2.Rcpt("c@vulos.to", nil)
+	err := sess2.Data(strings.NewReader("From: a@evil.example\r\nSubject: x\r\n\r\nbody\r\n"))
+	if se, ok := err.(*gosmtp.SMTPError); !ok || se.Code != 451 {
+		t.Fatalf("temperror must defer with 451, got %v", err)
+	}
+	if inbox != 0 || junk != 1 {
+		t.Fatalf("deferred message must not be delivered: inbox=%d junk=%d", inbox, junk)
+	}
+}

@@ -100,6 +100,10 @@ type AuthVerdict struct {
 	// sender retries, rather than being accepted with auth fail-open. Reject takes
 	// precedence over Defer if both are set.
 	Defer bool
+	// Quarantine is true when DMARC fails AND the sender domain publishes
+	// p=quarantine: the message is accepted but routed to Junk rather than the
+	// inbox (instead of the previous annotate-only behaviour that inboxed spoofs).
+	Quarantine bool
 }
 
 // Backend implements gosmtp.Backend.
@@ -120,6 +124,10 @@ type Backend struct {
 	// returns false the MX rejects at RCPT (550 5.1.1) instead of accepting the
 	// whole DATA and failing — cheaper and a smaller amplification surface.
 	KnownRcpt func(rcpt string) bool
+	// DeliverJunk, if set, is used instead of Deliver when the auth verdict marks a
+	// message for quarantine (DMARC p=quarantine): the message is delivered to the
+	// recipient's Junk folder rather than the inbox.
+	DeliverJunk DeliverFunc
 }
 
 // NewSession starts a new SMTP session.
@@ -176,6 +184,9 @@ func (s *session) Data(r io.Reader) error {
 	if err != nil {
 		return err
 	}
+	// deliver is the routing decision for this message: the default inbox path, or
+	// the Junk path when DMARC quarantines a failing message.
+	deliver := s.deliver
 	// Inbound authentication (DKIM): record results as a top header so downstream
 	// (filters, clients) can see them. Prepending a header at the start of the
 	// message is RFC-valid.
@@ -203,6 +214,10 @@ func (s *session) Data(r io.Reader) error {
 				// possible spoof on a slow/failing resolver. Fail closed, not open.
 				return &gosmtp.SMTPError{Code: 451, EnhancedCode: gosmtp.EnhancedCode{4, 7, 1}, Message: "temporary authentication failure, try again later"}
 			}
+			if v.Quarantine && s.backend.DeliverJunk != nil {
+				// DMARC p=quarantine: accept but route to Junk rather than the inbox.
+				deliver = s.backend.DeliverJunk
+			}
 		} else {
 			ar = s.backend.Verify(raw, s.remoteIP(), s.helo(), s.from)
 		}
@@ -213,7 +228,7 @@ func (s *session) Data(r io.Reader) error {
 	}
 	ctx := context.Background()
 	for _, rcpt := range s.rcpts {
-		if err := s.deliver(ctx, rcpt, raw); err != nil {
+		if err := deliver(ctx, rcpt, raw); err != nil {
 			return err
 		}
 	}

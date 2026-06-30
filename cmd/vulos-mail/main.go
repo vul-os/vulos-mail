@@ -425,9 +425,10 @@ func main() {
 	// Listeners.
 	authn := &emailauth.Authenticator{} // real DNS
 	mx := smtpin.NewServer(&smtpin.Backend{
-		Deliver:    mgr.Deliver,
-		AuthServID: domain,
-		KnownRcpt:  mgr.IsLocal, // reject unknown recipients at RCPT (550 5.1.1)
+		Deliver:     mgr.Deliver,
+		DeliverJunk: mgr.DeliverJunk, // DMARC p=quarantine → Junk, not inbox
+		AuthServID:  domain,
+		KnownRcpt:   mgr.IsLocal, // reject unknown recipients at RCPT (550 5.1.1)
 		VerifyVerdict: func(raw []byte, ip net.IP, helo, mailFrom string) smtpin.AuthVerdict {
 			// Bound DNS-backed auth (SPF/DMARC) so a slow/dead resolver can never
 			// stall the delivery path.
@@ -445,8 +446,11 @@ func main() {
 				// p=reject spoof on a slow/SERVFAIL resolver.
 				v.Defer = true
 			case res.DMARC == "fail" && res.DMARCPolicy == "reject":
-				// Enforce DMARC only at p=reject; quarantine/none stay annotate-only.
+				// p=reject: refuse at SMTP time.
 				v.Reject = true
+			case res.DMARC == "fail" && res.DMARCPolicy == "quarantine":
+				// p=quarantine: accept but route to Junk (no longer annotate-only).
+				v.Quarantine = true
 			}
 			return v
 		},

@@ -303,6 +303,18 @@ func (m *Manager) account(ctx context.Context, address string) (*account.Runtime
 // Deliver is the MX delivery callback: route an accepted message to a recipient's
 // account inbox. Unknown recipients are rejected (the MX returns an error).
 func (m *Manager) Deliver(ctx context.Context, rcpt string, raw []byte) error {
+	return m.deliver(ctx, rcpt, raw, false)
+}
+
+// DeliverJunk is the MX delivery callback for messages the inbound auth verdict
+// marks for quarantine (DMARC p=quarantine): the message is accepted but lands in
+// Junk rather than the inbox, so a spoof is contained without being silently
+// dropped. The spam filter can still hard-reject it.
+func (m *Manager) DeliverJunk(ctx context.Context, rcpt string, raw []byte) error {
+	return m.deliver(ctx, rcpt, raw, true)
+}
+
+func (m *Manager) deliver(ctx context.Context, rcpt string, raw []byte, forceJunk bool) error {
 	rt, err := m.account(ctx, rcpt)
 	if err != nil {
 		return err
@@ -317,6 +329,11 @@ func (m *Manager) Deliver(ctx context.Context, rcpt string, raw []byte) error {
 		}
 	}
 	label := model.LabelInbox
+	if forceJunk {
+		// DMARC quarantine: route to Junk regardless of the content filter's inbox
+		// verdict (the filter may still escalate to Reject below).
+		label = model.LabelSpam
+	}
 	if m.Inbound != nil {
 		switch v := m.Inbound.Scan(ctx, raw); v.Action {
 		case filter.Reject:
