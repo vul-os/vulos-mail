@@ -417,9 +417,21 @@ func main() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			res := authn.Verify(ctx, raw, ip, helo, mailFrom)
-			// Enforce DMARC only at p=reject; quarantine/none stay annotate-only.
-			reject := res.DMARC == "fail" && res.DMARCPolicy == "reject"
-			return smtpin.AuthVerdict{AuthResults: res.AuthResults(), Reject: reject}
+			v := smtpin.AuthVerdict{AuthResults: res.AuthResults()}
+			switch {
+			case res.FromMalformed:
+				// No evaluable From (missing/duplicate/garbled): refuse — it cannot be
+				// made DMARC-safe and is a spoofing vector. (Reject, not fail-open none.)
+				v.Reject = true
+			case res.DMARC == "temperror":
+				// DMARC DNS temperror: DEFER (4xx) rather than accept a possible
+				// p=reject spoof on a slow/SERVFAIL resolver.
+				v.Defer = true
+			case res.DMARC == "fail" && res.DMARCPolicy == "reject":
+				// Enforce DMARC only at p=reject; quarantine/none stay annotate-only.
+				v.Reject = true
+			}
+			return v
 		},
 	}, mxAddr, domain)
 	mx.TLSConfig = tlsCfg

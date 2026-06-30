@@ -34,9 +34,15 @@ type Result struct {
 	SPF         string // pass/fail/softfail/neutral/none/temperror/permerror
 	SPFDomain   string
 	DKIM        []dkim.Result
-	DMARC       string // pass/fail/none
+	DMARC       string // pass/fail/none/temperror
 	DMARCPolicy string // none/quarantine/reject
 	FromDomain  string
+	// FromMalformed is set when the message has no usable RFC5322.From identifier:
+	// zero From header fields, more than one From header field, or an unparseable
+	// From. DMARC cannot be evaluated against such a message and it is a known
+	// spoofing vector, so the caller refuses it rather than silently treating it
+	// as DMARC "none" (= accept).
+	FromMalformed bool
 }
 
 // Verify runs SPF (needs the connecting ip + MAIL FROM), DKIM (over the message),
@@ -60,9 +66,20 @@ func (a *Authenticator) Verify(ctx context.Context, raw []byte, ip net.IP, helo,
 	// DKIM.
 	r.DKIM, _ = dkim.Verify(raw, a.DKIMLookupTXT)
 
-	// From domain (DMARC is keyed on the header From, not MAIL FROM).
-	if env, err := mime.ParseEnvelope(raw); err == nil && len(env.From) > 0 {
-		r.FromDomain = domainOf(env.From[0])
+	// From domain (DMARC is keyed on the header From, not MAIL FROM). DMARC
+	// requires EXACTLY ONE From header field with a single, parseable identifier;
+	// zero, multiple, or garbled From fields are unevaluable (and a spoof vector),
+	// so flag them rather than silently downgrading DMARC to "none" (= accept).
+	switch n := headerFieldCount(raw, "From"); {
+	case n != 1:
+		r.FromMalformed = true
+	default:
+		env, err := mime.ParseEnvelope(raw)
+		if err != nil || len(env.From) != 1 || domainOf(env.From[0]) == "" {
+			r.FromMalformed = true
+		} else {
+			r.FromDomain = domainOf(env.From[0])
+		}
 	}
 
 	// DMARC = SPF-or-DKIM that passes AND aligns with the From domain.
@@ -71,11 +88,25 @@ func (a *Authenticator) Verify(ctx context.Context, raw []byte, ip net.IP, helo,
 }
 
 func (a *Authenticator) evalDMARC(r Result) (result, policy string) {
-	if r.FromDomain == "" {
-		return "none", ""
+	if r.FromMalformed || r.FromDomain == "" {
+		// Unevaluable From — treat as a failure with no resolvable policy. The
+		// caller refuses the message (it cannot be made DMARC-safe).
+		return "fail", ""
 	}
 	rec, err := dmarc.LookupWithOptions(r.FromDomain, &dmarc.LookupOptions{LookupTXT: a.DMARCLookupTXT})
-	if err != nil || rec == nil {
+	if err != nil {
+		// A temporary DNS failure (SERVFAIL/timeout) must NOT be read as "no
+		// policy" — a p=reject domain would then have its spoof accepted on a slow
+		// resolver. Signal temperror so the caller defers (4xx) and the sender
+		// retries once DNS recovers.
+		if dmarc.IsTempFail(err) {
+			return "temperror", ""
+		}
+		// ErrNoPolicy / a malformed record: the domain genuinely publishes no
+		// usable DMARC policy, so DMARC is "none" (annotate-only).
+		return "none", ""
+	}
+	if rec == nil {
 		return "none", ""
 	}
 	policy = string(rec.Policy)
@@ -115,6 +146,46 @@ func aligned(a, b string) bool {
 		return false
 	}
 	return a == b || strings.HasSuffix(a, "."+b) || strings.HasSuffix(b, "."+a)
+}
+
+// headerFieldCount counts how many times a header field appears in the message
+// header block (case-insensitive, unfolded). Continuation (folded) lines and the
+// body are ignored. Used to detect the zero/multiple-From case that DMARC must
+// treat as unevaluable rather than as a single From.
+func headerFieldCount(raw []byte, field string) int {
+	// Header block ends at the first blank line (CRLF CRLF or LF LF).
+	header := raw
+	if i := bytesIndexHeaderEnd(raw); i >= 0 {
+		header = raw[:i]
+	}
+	prefix := strings.ToLower(field) + ":"
+	count := 0
+	for _, ln := range strings.Split(string(header), "\n") {
+		if ln == "" {
+			continue
+		}
+		// A leading space/tab is a folded continuation of the previous field.
+		if ln[0] == ' ' || ln[0] == '\t' {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(ln), prefix) {
+			count++
+		}
+	}
+	return count
+}
+
+// bytesIndexHeaderEnd returns the offset of the header/body separator, or -1.
+func bytesIndexHeaderEnd(raw []byte) int {
+	for i := 0; i+1 < len(raw); i++ {
+		if raw[i] == '\n' && (raw[i+1] == '\n') {
+			return i
+		}
+		if raw[i] == '\n' && i+2 < len(raw) && raw[i+1] == '\r' && raw[i+2] == '\n' {
+			return i
+		}
+	}
+	return -1
 }
 
 func domainOf(addr string) string {

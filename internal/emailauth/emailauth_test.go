@@ -90,3 +90,51 @@ func TestVerifySPFFailFromWrongIP(t *testing.T) {
 		t.Errorf("DMARC = %q, want fail (no aligned auth)", r.DMARC)
 	}
 }
+
+// tempDNS returns a temporary (Temporary()==true) DNS error for DMARC lookups,
+// simulating a SERVFAIL/timeout.
+type tempDNSErr struct{}
+
+func (tempDNSErr) Error() string   { return "temporary failure" }
+func (tempDNSErr) Timeout() bool   { return true }
+func (tempDNSErr) Temporary() bool { return true }
+
+// TestVerifyDMARCTemperrorDefers ensures a transient DNS failure looking up the
+// DMARC record yields DMARC="temperror" (so the caller DEFERS) — NOT "none"
+// (which would accept a possible p=reject spoof on a slow resolver).
+func TestVerifyDMARCTemperror(t *testing.T) {
+	ctx := context.Background()
+	a := &emailauth.Authenticator{
+		DMARCLookupTXT: func(string) ([]string, error) { return nil, tempDNSErr{} },
+	}
+	r := a.Verify(ctx, []byte("From: alice@sender.test\r\nTo: bob@vulos.to\r\n\r\nx\r\n"), nil, "x", "")
+	if r.DMARC != "temperror" {
+		t.Errorf("DMARC = %q, want temperror on DNS temp failure (must defer, not accept)", r.DMARC)
+	}
+}
+
+// TestVerifyMultipleFromRejected ensures a message with two From header fields is
+// flagged FromMalformed (unevaluable) rather than silently downgraded to none.
+func TestVerifyMultipleFromRejected(t *testing.T) {
+	ctx := context.Background()
+	dns := fakeDNS{txt: map[string][]string{"_dmarc.evil.test": {"v=DMARC1; p=reject"}}}
+	a := &emailauth.Authenticator{DMARCLookupTXT: dns.lookupTXT}
+	raw := []byte("From: real@bank.test\r\nFrom: attacker@evil.test\r\nTo: bob@vulos.to\r\n\r\nx\r\n")
+	r := a.Verify(ctx, raw, nil, "x", "")
+	if !r.FromMalformed {
+		t.Errorf("FromMalformed = false, want true for double From header")
+	}
+	if r.DMARC != "fail" {
+		t.Errorf("DMARC = %q, want fail for unevaluable From", r.DMARC)
+	}
+}
+
+// TestVerifyMissingFrom ensures a message with no From header is flagged.
+func TestVerifyMissingFrom(t *testing.T) {
+	ctx := context.Background()
+	a := &emailauth.Authenticator{}
+	r := a.Verify(ctx, []byte("To: bob@vulos.to\r\nSubject: hi\r\n\r\nx\r\n"), nil, "x", "")
+	if !r.FromMalformed {
+		t.Errorf("FromMalformed = false, want true for missing From header")
+	}
+}

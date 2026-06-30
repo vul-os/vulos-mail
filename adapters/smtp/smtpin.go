@@ -90,10 +90,16 @@ type DeliverFunc func(ctx context.Context, rcpt string, raw []byte) error
 type AuthVerdict struct {
 	// AuthResults is the Authentication-Results header value to prepend.
 	AuthResults string
-	// Reject is true when delivery must be refused with SMTP 550 — set only when
-	// DMARC fails AND the sender domain's published policy is p=reject. A
-	// quarantine/none policy never sets this (annotate-only).
+	// Reject is true when delivery must be refused with SMTP 550 — set when DMARC
+	// fails AND the sender domain's published policy is p=reject, or when the
+	// message has no evaluable From identifier. A quarantine/none policy never sets
+	// this (annotate-only).
 	Reject bool
+	// Defer is true when authentication could not be completed for a transient
+	// reason (e.g. a DMARC DNS temperror): the message is refused with a 4xx so the
+	// sender retries, rather than being accepted with auth fail-open. Reject takes
+	// precedence over Defer if both are set.
+	Defer bool
 }
 
 // Backend implements gosmtp.Backend.
@@ -187,8 +193,15 @@ func (s *session) Data(r io.Reader) error {
 			v := s.backend.VerifyVerdict(raw, s.remoteIP(), s.helo(), s.from)
 			ar = v.AuthResults
 			if v.Reject {
-				// DMARC failed and the domain publishes p=reject: refuse delivery.
-				return &gosmtp.SMTPError{Code: 550, EnhancedCode: gosmtp.EnhancedCode{5, 7, 1}, Message: "message rejected by DMARC policy (p=reject)"}
+				// DMARC failed and the domain publishes p=reject (or the From is
+				// unevaluable): refuse delivery permanently.
+				return &gosmtp.SMTPError{Code: 550, EnhancedCode: gosmtp.EnhancedCode{5, 7, 1}, Message: "message rejected by DMARC policy"}
+			}
+			if v.Defer {
+				// Authentication could not be completed (transient, e.g. a DMARC DNS
+				// temperror): defer so the sender retries rather than accepting a
+				// possible spoof on a slow/failing resolver. Fail closed, not open.
+				return &gosmtp.SMTPError{Code: 451, EnhancedCode: gosmtp.EnhancedCode{4, 7, 1}, Message: "temporary authentication failure, try again later"}
 			}
 		} else {
 			ar = s.backend.Verify(raw, s.remoteIP(), s.helo(), s.from)
