@@ -2,6 +2,7 @@ package dkim_test
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 
@@ -65,14 +66,55 @@ func TestAuthResultsFormat(t *testing.T) {
 	}
 }
 
-func TestSignNoKeyPassesThrough(t *testing.T) {
+func TestSignNoKeyReturnsErrNoKey(t *testing.T) {
 	s := dkim.NewSigner()
 	raw := []byte("From: x@unknown.test\r\n\r\nhi\r\n")
 	out, err := s.Sign("unknown.test", raw)
+	// New contract: a missing key surfaces ErrNoKey rather than silently returning
+	// the message unsigned with a nil error.
+	if !errors.Is(err, dkim.ErrNoKey) {
+		t.Fatalf("err = %v, want ErrNoKey", err)
+	}
+	if out != nil {
+		t.Error("no key should return a nil body, not the unsigned message")
+	}
+}
+
+// TestSignOversignsFromSubjectTo verifies the signed h= tag oversigns
+// From/Subject/To (each listed twice), so adding a duplicate of one of those
+// headers downstream breaks verification (added-header replay defence).
+func TestSignOversignsFromSubjectTo(t *testing.T) {
+	key, _, err := dkim.GenerateRSAKey(1024)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(out, raw) || strings.Contains(string(out), "DKIM-Signature") {
-		t.Error("no key should pass message through unsigned")
+	s := dkim.NewSigner()
+	s.AddDomain("sender.test", "s1", key)
+	raw := []byte("From: a@sender.test\r\nTo: b@vulos.to\r\nSubject: Hi\r\n\r\nbody\r\n")
+	signed, err := s.Sign("sender.test", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Unfold the DKIM-Signature header (strip CRLF + leading whitespace) so the h=
+	// tag is on one logical line, then isolate its value.
+	unfolded := strings.NewReplacer("\r\n", "", "\n", "", "\t", "", " ", "").Replace(string(signed))
+	low := strings.ToLower(unfolded)
+	hi := strings.Index(low, ";h=") // ";h=" avoids matching "bh=" (body hash)
+	if hi < 0 {
+		t.Fatal("no h= tag in signature")
+	}
+	htag := low[hi+3:]
+	if end := strings.Index(htag, ";"); end >= 0 {
+		htag = htag[:end]
+	}
+	fields := strings.Split(htag, ":")
+	count := map[string]int{}
+	for _, f := range fields {
+		count[f]++
+	}
+	for _, h := range []string{"from", "subject", "to"} {
+		if count[h] < 2 {
+			t.Errorf("h= tag oversigns %q %d times, want >=2 (h=%s)", h, count[h], htag)
+		}
 	}
 }

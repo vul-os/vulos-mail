@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"net/mail"
 	"os"
 	"path/filepath"
@@ -590,8 +591,18 @@ func (m *Manager) SendRaw(_ context.Context, from string, to []string, raw []byt
 		}
 	}
 	if m.Signer != nil {
-		if signed, err := m.Signer.Sign(tenantOf(from), raw); err == nil {
+		fromDomain := tenantOf(from)
+		signed, serr := m.Signer.Sign(fromDomain, raw)
+		switch {
+		case serr == nil:
 			raw = signed
+		case errors.Is(serr, dkim.ErrNoKey):
+			// Surface (don't silently send unsigned): an unsigned message is a
+			// spam-folder risk. Every configured sending domain gets a key at
+			// startup, so this indicates a misconfiguration for this From domain.
+			log.Printf("WARNING: no DKIM key for sending domain %q — sending UNSIGNED (deliverability risk)", fromDomain)
+		default:
+			log.Printf("DKIM signing failed for %q: %v — sending unsigned", fromDomain, serr)
 		}
 	}
 	byDomain := map[string][]string{}

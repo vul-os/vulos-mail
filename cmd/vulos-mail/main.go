@@ -292,8 +292,25 @@ func main() {
 		log.Printf("event log backend: sqlite")
 	}
 	sched.SetOnBounce(func(msg mtaout.OutMessage, reason string) { mgr.HandleBounce(domain, msg, reason) })
-	if txt, err := mgr.EnsureDKIM(domain, "vulos-mail"); err == nil && txt != "" {
-		log.Printf("DKIM: publish TXT at vulos-mail._domainkey.%s :  %s", domain, txt)
+	// DKIM keys for EVERY configured sending domain — not just the primary — so
+	// mail From any of them is signed (DKIM=none → spam). Additional sending
+	// domains are listed in VULOS_SENDING_DOMAINS (comma-separated). A domain
+	// without a key would be sent unsigned (now surfaced loudly by the signer).
+	dkimDomains := []string{domain}
+	for _, d := range strings.Split(env("VULOS_SENDING_DOMAINS", ""), ",") {
+		if d = strings.TrimSpace(strings.ToLower(d)); d != "" && d != domain {
+			dkimDomains = append(dkimDomains, d)
+		}
+	}
+	for _, d := range dkimDomains {
+		txt, derr := mgr.EnsureDKIM(d, "vulos-mail")
+		if derr != nil {
+			log.Printf("WARNING: could not ensure DKIM key for sending domain %q: %v (mail from it will go UNSIGNED)", d, derr)
+			continue
+		}
+		if txt != "" {
+			log.Printf("DKIM: publish TXT at vulos-mail._domainkey.%s :  %s", d, txt)
+		}
 	}
 	// Identity: standalone by default (a persistent, file-backed local account
 	// store — the OSS self-hosted path), with the optional vulos-cloud adapter

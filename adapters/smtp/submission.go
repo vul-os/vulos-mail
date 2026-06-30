@@ -2,7 +2,9 @@ package smtpin
 
 import (
 	"context"
+	"errors"
 	"io"
+	"log"
 	"net"
 	"strings"
 	"time"
@@ -173,8 +175,19 @@ func (s *submitSession) Data(r io.Reader) error {
 
 	// DKIM-sign with the From domain's key (aligned signing) before storing/sending.
 	if s.backend.Signer != nil {
-		if signed, err := s.backend.Signer.Sign(domainOf(efFrom), raw); err == nil {
+		fromDomain := domainOf(efFrom)
+		signed, err := s.backend.Signer.Sign(fromDomain, raw)
+		switch {
+		case err == nil:
 			raw = signed
+		case errors.Is(err, dkim.ErrNoKey):
+			// No key for this sending domain: the message would go out UNSIGNED
+			// (DKIM=none → likely spam). Don't silently accept that — surface it so
+			// the operator configures a key (every configured sending domain gets one
+			// at startup; this fires only for a misconfigured/unexpected domain).
+			log.Printf("WARNING: no DKIM key for sending domain %q — sending UNSIGNED (deliverability risk)", fromDomain)
+		default:
+			log.Printf("DKIM signing failed for %q: %v — sending unsigned", fromDomain, err)
 		}
 	}
 

@@ -78,12 +78,46 @@ func (s *Signer) AddDomain(domain, selector string, key crypto.Signer) {
 // Has reports whether a key exists for the domain.
 func (s *Signer) Has(domain string) bool { _, ok := s.keys[domain]; return ok }
 
-// Sign prepends a DKIM-Signature for domain. If no key is registered, the message
-// is returned unchanged (unsigned) rather than failing — callers decide policy.
+// ErrNoKey is returned by Sign when no signing key is registered for the From
+// domain. It is a distinct, inspectable error so callers can surface a loud
+// "sending unsigned" signal (a deliverability/spam risk) instead of the previous
+// behaviour of silently returning the message unsigned with a nil error.
+var ErrNoKey = errors.New("dkim: no signing key for domain")
+
+// oversignedHeaders are listed an extra time in the signed "h=" tag so that
+// ADDING another instance of one of these fields downstream breaks the signature
+// (RFC 6376 §5.4 oversigning). These are the headers a receiver and a human
+// actually key trust/identity on, so they are the replay/spoof-via-added-header
+// targets.
+var oversignedHeaders = []string{"From", "Subject", "To"}
+
+// signedHeaders is the curated set of header fields included in the signature
+// (once), in addition to the oversigned ones above. Listing a field that is
+// absent simply oversigns it (prevents a later addition) which is harmless.
+var signedHeaders = []string{
+	"Cc", "Date", "Message-ID", "Reply-To", "In-Reply-To", "References",
+	"MIME-Version", "Content-Type", "Content-Transfer-Encoding",
+}
+
+// headerKeys builds the HeaderKeys list: each oversigned header twice (so an
+// added duplicate fails verification), then the rest once.
+func headerKeys() []string {
+	keys := make([]string, 0, len(oversignedHeaders)*2+len(signedHeaders))
+	for _, h := range oversignedHeaders {
+		keys = append(keys, h, h) // listed twice → oversigned
+	}
+	keys = append(keys, signedHeaders...)
+	return keys
+}
+
+// Sign prepends a DKIM-Signature for domain, oversigning From/Subject/To. If no
+// key is registered for the domain it returns ErrNoKey (and a nil body) rather
+// than silently returning the message unsigned — the caller MUST decide what to
+// do, because an unsigned message is a spam-folder risk.
 func (s *Signer) Sign(domain string, raw []byte) ([]byte, error) {
 	dk, ok := s.keys[domain]
 	if !ok {
-		return raw, nil
+		return nil, ErrNoKey
 	}
 	var buf bytes.Buffer
 	opt := &dkim.SignOptions{
@@ -93,6 +127,7 @@ func (s *Signer) Sign(domain string, raw []byte) ([]byte, error) {
 		Hash:                   crypto.SHA256,
 		HeaderCanonicalization: dkim.CanonicalizationRelaxed,
 		BodyCanonicalization:   dkim.CanonicalizationRelaxed,
+		HeaderKeys:             headerKeys(),
 	}
 	if err := dkim.Sign(&buf, bytes.NewReader(raw), opt); err != nil {
 		return nil, err
