@@ -24,20 +24,37 @@ type Account struct {
 	Threads  map[model.ID]*model.Thread
 
 	order []model.ID // message ingest order, for deterministic listing
+	// byMessageID indexes the RFC5322 Message-ID header → internal message id, so
+	// inbound delivery can be made idempotent (a retried SMTP transaction must not
+	// re-ingest a recipient that was already delivered). Derived state, not
+	// serialized; rebuilt on Restore.
+	byMessageID map[string]model.ID
 }
 
 // New returns a fresh account seeded with the system labels.
 func New() *Account {
 	a := &Account{
-		Messages: map[model.ID]*model.Message{},
-		Labels:   map[model.LabelID]*model.Label{},
-		Threads:  map[model.ID]*model.Thread{},
+		Messages:    map[model.ID]*model.Message{},
+		Labels:      map[model.LabelID]*model.Label{},
+		Threads:     map[model.ID]*model.Thread{},
+		byMessageID: map[string]model.ID{},
 	}
 	for _, l := range model.SystemLabels() {
 		lc := l
 		a.Labels[l.ID] = &lc
 	}
 	return a
+}
+
+// MessageIDExists reports whether a message with the given RFC5322 Message-ID
+// header is already present, returning its internal id. Used by Ingest for
+// per-account idempotency on inbound delivery. An empty mid never matches.
+func (a *Account) MessageIDExists(mid string) (model.ID, bool) {
+	if mid == "" || a.byMessageID == nil {
+		return "", false
+	}
+	id, ok := a.byMessageID[mid]
+	return id, ok
 }
 
 // snapshot is the serializable form of an Account (includes the unexported
@@ -77,6 +94,12 @@ func Restore(data []byte) (*Account, error) {
 		a.Threads = s.Threads
 	}
 	a.order = s.Order
+	// Rebuild the derived Message-ID index from the restored messages.
+	for id, m := range a.Messages {
+		if m != nil && m.Envelope.MessageIDHeader != "" {
+			a.byMessageID[m.Envelope.MessageIDHeader] = id
+		}
+	}
 	return a, nil
 }
 
@@ -109,6 +132,14 @@ func (a *Account) Apply(r eventlog.Record) {
 			a.Messages[e.MessageID] = m
 			a.order = append(a.order, e.MessageID)
 			a.attachToThread(e.ThreadID, e.MessageID)
+			if a.byMessageID == nil {
+				a.byMessageID = map[string]model.ID{}
+			}
+			if mid := e.Envelope.MessageIDHeader; mid != "" {
+				if _, seen := a.byMessageID[mid]; !seen {
+					a.byMessageID[mid] = e.MessageID
+				}
+			}
 		}
 
 	case event.Labeled:
@@ -147,7 +178,10 @@ func (a *Account) Apply(r eventlog.Record) {
 		}
 
 	case event.MessageExpunged:
-		if _, exists := a.Messages[e.MessageID]; exists {
+		if m, exists := a.Messages[e.MessageID]; exists {
+			if mid := m.Envelope.MessageIDHeader; mid != "" && a.byMessageID[mid] == e.MessageID {
+				delete(a.byMessageID, mid)
+			}
 			delete(a.Messages, e.MessageID)
 			a.removeFromOrder(e.MessageID)
 			a.detachFromThreads(e.MessageID)

@@ -149,6 +149,16 @@ func (r *Runtime) Ingest(ctx context.Context, raw []byte, labels []model.LabelID
 	}
 
 	r.mu.Lock()
+	// Idempotency: a multi-recipient SMTP transaction that fails on a later
+	// recipient is retried in full, so without dedup the earlier recipients would
+	// be re-ingested (a fresh msgID each time) → duplicate mail. If this account
+	// already holds a message with the same RFC5322 Message-ID, return it instead
+	// of appending again. (Messages with no Message-ID can't be deduped this way;
+	// a possible duplicate is preferred to losing the message.)
+	if existing, dup := r.proj.MessageIDExists(env.MessageIDHeader); dup {
+		r.mu.Unlock()
+		return existing, nil
+	}
 	threadID := r.threader.Resolve(env)
 	msgID := model.ID(r.ids.New())
 	rec, err := r.log.Append(ctx, "ingest", event.MessageIngested{

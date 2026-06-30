@@ -92,3 +92,36 @@ func TestThreadingSurvivesReopen(t *testing.T) {
 		t.Error("reply after reopen should join the original thread")
 	}
 }
+
+// TestIngestIdempotentOnMessageID proves the inbound retry-dedup fix: ingesting
+// the same Message-ID twice (as happens when a multi-recipient SMTP transaction
+// is retried after a later recipient failed) does not duplicate the message and
+// returns the original id.
+func TestIngestIdempotentOnMessageID(t *testing.T) {
+	rt := newRuntime(t)
+	ctx := context.Background()
+	raw := msg("dup-1@example.com", "", "Hello", "body")
+
+	id1, err := rt.Ingest(ctx, raw, []model.LabelID{model.LabelInbox}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, err := rt.Ingest(ctx, raw, []model.LabelID{model.LabelInbox}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id1 != id2 {
+		t.Errorf("retry returned a different id: %q vs %q", id1, id2)
+	}
+	if got := len(rt.MessagesWithLabel(model.LabelInbox)); got != 1 {
+		t.Errorf("inbox has %d messages after a retried delivery, want 1 (no duplicate)", got)
+	}
+
+	// A genuinely different Message-ID is still a new message.
+	if _, err := rt.Ingest(ctx, msg("dup-2@example.com", "", "Other", "b"), []model.LabelID{model.LabelInbox}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(rt.MessagesWithLabel(model.LabelInbox)); got != 2 {
+		t.Errorf("inbox has %d, want 2", got)
+	}
+}
