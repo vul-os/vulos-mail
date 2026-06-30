@@ -16,6 +16,8 @@ package mtaout
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"hash/fnv"
 	"sync"
@@ -146,6 +148,39 @@ func (w *Warmup) Record(domain string, now time.Time) {
 
 func wkey(domain string, day int) string { return fmt.Sprintf("%s|%d", domain, day) }
 
+// WarmupState is the serializable, recoverable state of a Warmup (the per-domain
+// first-send time and daily counters). The ramp schedule is config and is not
+// part of the snapshot.
+type WarmupState struct {
+	FirstSeen map[string]time.Time `json:"firstSeen"`
+	Used      map[string]int       `json:"used"`
+}
+
+// Snapshot returns the warmup's recoverable state so it can be persisted and
+// restored across restarts (otherwise a redeploy would reset every domain's ramp
+// to day 0, hurting deliverability).
+func (w *Warmup) Snapshot() WarmupState {
+	fs := make(map[string]time.Time, len(w.firstSeen))
+	for k, v := range w.firstSeen {
+		fs[k] = v
+	}
+	used := make(map[string]int, len(w.used))
+	for k, v := range w.used {
+		used[k] = v
+	}
+	return WarmupState{FirstSeen: fs, Used: used}
+}
+
+// Restore loads a previously-snapshotted warmup state.
+func (w *Warmup) Restore(st WarmupState) {
+	if st.FirstSeen != nil {
+		w.firstSeen = st.FirstSeen
+	}
+	if st.Used != nil {
+		w.used = st.Used
+	}
+}
+
 // --- Reputation ---
 
 // Reputation tracks per-tenant outcomes and gates senders whose bounce/complaint
@@ -179,6 +214,31 @@ func (r *Reputation) RecordBounced(tenant string)   { r.get(tenant).bounced++ }
 // RecordComplaint is driven by feedback loops (FBL).
 func (r *Reputation) RecordComplaint(tenant string) { r.get(tenant).complaints++ }
 
+// RepStatState is one tenant's recoverable reputation counters.
+type RepStatState struct {
+	Delivered  int `json:"delivered"`
+	Bounced    int `json:"bounced"`
+	Complaints int `json:"complaints"`
+}
+
+// Snapshot returns the reputation gate's recoverable per-tenant counters so they
+// can be persisted and restored across restarts (otherwise a redeploy would let
+// a previously-gated abusive tenant immediately resume on the shared IPs).
+func (r *Reputation) Snapshot() map[string]RepStatState {
+	out := make(map[string]RepStatState, len(r.stats))
+	for t, st := range r.stats {
+		out[t] = RepStatState{Delivered: st.delivered, Bounced: st.bounced, Complaints: st.complaints}
+	}
+	return out
+}
+
+// Restore loads previously-snapshotted reputation counters.
+func (r *Reputation) Restore(state map[string]RepStatState) {
+	for t, s := range state {
+		r.stats[t] = &repStat{delivered: s.Delivered, bounced: s.Bounced, complaints: s.Complaints}
+	}
+}
+
 // Throttled reports whether a tenant is currently gated.
 func (r *Reputation) Throttled(tenant string) bool {
 	st := r.stats[tenant]
@@ -194,6 +254,47 @@ func (r *Reputation) Throttled(tenant string) bool {
 	return bounceRate > r.maxBounceRate || complaintRate > r.maxComplaintRate
 }
 
+// --- durable queue persistence ---
+
+// QueuedItem is the persisted form of one queued outbound message together with
+// its retry state. It is what a QueueStore writes and reloads so the outbound
+// queue survives a crash/deploy.
+type QueuedItem struct {
+	Msg         OutMessage
+	Attempts    int
+	NextAttempt time.Time
+}
+
+// QueueStore is durable storage for the outbound queue. It is the seam that turns
+// the otherwise in-memory scheduler crash-safe: a mail server must never lose
+// acknowledged mail, so submission only returns 250 after Add has committed to
+// stable storage.
+//
+// Implementations MUST guarantee the record is durable (fsync'd / committed)
+// before Add returns. Update persists a changed retry state (after a TempFail
+// defer); Remove deletes a completed (delivered or bounced) item; Load returns
+// every persisted item for recovery at startup.
+//
+// A nil store keeps the queue in memory only (tests / ephemeral dev runs).
+type QueueStore interface {
+	Add(it QueuedItem) error
+	Update(it QueuedItem) error
+	Remove(id string) error
+	Load() ([]QueuedItem, error)
+}
+
+// newQueueID mints a random id used to key a queued message in the store when the
+// submitter did not supply one.
+func newQueueID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// Fall back to a time-based id; collision risk is negligible and this only
+		// triggers if the OS RNG is unavailable.
+		return fmt.Sprintf("q-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
+
 // --- Scheduler ---
 
 // Scheduler drains an outbound queue respecting per-destination caps, warmup, and
@@ -203,6 +304,7 @@ type Scheduler struct {
 	pool         *Pool
 	warmup       *Warmup
 	rep          *Reputation
+	store        QueueStore
 	maxPerDomain int // max dispatches to one destination domain per tick
 	maxAttempts  int
 	backoff      func(attempt int) time.Duration
@@ -228,10 +330,14 @@ type queued struct {
 
 // Config configures a Scheduler.
 type Config struct {
-	Sender       Sender
-	Pool         *Pool
-	Warmup       *Warmup
-	Reputation   *Reputation
+	Sender     Sender
+	Pool       *Pool
+	Warmup     *Warmup
+	Reputation *Reputation
+	// Store, if set, makes the outbound queue durable: Enqueue persists before it
+	// returns and the queue is rebuilt from it on startup via Recover. nil keeps
+	// the queue in memory only.
+	Store        QueueStore
 	MaxPerDomain int
 	MaxAttempts  int
 	Backoff      func(attempt int) time.Duration
@@ -250,15 +356,66 @@ func NewScheduler(cfg Config) *Scheduler {
 	}
 	return &Scheduler{
 		sender: cfg.Sender, pool: cfg.Pool, warmup: cfg.Warmup, rep: cfg.Reputation,
+		store:        cfg.Store,
 		maxPerDomain: cfg.MaxPerDomain, maxAttempts: cfg.MaxAttempts, backoff: cfg.Backoff,
 	}
 }
 
-// Enqueue adds a message to the outbound queue.
-func (s *Scheduler) Enqueue(msg OutMessage) {
+// Recover rebuilds the in-memory queue from the durable store (call once at
+// startup, before the Tick loop). It is a no-op when no store is configured.
+// Recovered messages keep their attempt count and next-attempt time so retries
+// and the eventual bounce/DSN survive a restart.
+func (s *Scheduler) Recover() error {
+	if s.store == nil {
+		return nil
+	}
+	items, err := s.store.Load()
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, it := range items {
+		s.queue = append(s.queue, &queued{msg: it.Msg, attempts: it.Attempts, nextAttempt: it.NextAttempt})
+	}
+	return nil
+}
+
+// Enqueue adds a message to the outbound queue. When a durable store is
+// configured the message is persisted (and fsync'd) BEFORE Enqueue returns, so a
+// crash immediately after acknowledgement cannot lose it; the error is returned
+// to the caller so submission can defer (4xx) rather than falsely accept (250)
+// mail it failed to persist. Without a store it is an in-memory append.
+func (s *Scheduler) Enqueue(msg OutMessage) error {
+	if msg.ID == "" {
+		msg.ID = newQueueID()
+	}
+	if s.store != nil {
+		if err := s.store.Add(QueuedItem{Msg: msg}); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
 	s.queue = append(s.queue, &queued{msg: msg})
+	s.mu.Unlock()
+	return nil
+}
+
+// removeDurable deletes a completed (delivered/bounced) item from the store. It
+// is best-effort: a failed delete can at worst re-deliver on restart (a
+// duplicate), never lose mail, so the scheduling pass is not aborted on error.
+func (s *Scheduler) removeDurable(id string) {
+	if s.store != nil {
+		_ = s.store.Remove(id)
+	}
+}
+
+// updateDurable persists a deferred item's new retry state. Best-effort for the
+// same reason as removeDurable: losing an update only resets the backoff window.
+func (s *Scheduler) updateDurable(q *queued) {
+	if s.store != nil {
+		_ = s.store.Update(QueuedItem{Msg: q.msg, Attempts: q.attempts, NextAttempt: q.nextAttempt})
+	}
 }
 
 // Pending returns the current queue depth.
@@ -322,6 +479,7 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) TickStats {
 			if s.rep != nil {
 				s.rep.RecordDelivered(q.msg.Tenant)
 			}
+			s.removeDurable(q.msg.ID)
 		case TempFail:
 			q.attempts++
 			if q.attempts >= s.maxAttempts {
@@ -330,10 +488,14 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) TickStats {
 				if s.rep != nil {
 					s.rep.RecordBounced(q.msg.Tenant)
 				}
+				s.removeDurable(q.msg.ID)
 			} else {
 				q.nextAttempt = now.Add(s.backoff(q.attempts))
 				remaining = append(remaining, q)
 				st.Deferred++
+				// Persist the new retry state so a restart resumes the backoff and
+				// the attempt count keeps climbing toward the eventual bounce/DSN.
+				s.updateDurable(q)
 			}
 		case PermFail:
 			st.Bounced++
@@ -345,6 +507,7 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) TickStats {
 			if s.rep != nil {
 				s.rep.RecordBounced(q.msg.Tenant)
 			}
+			s.removeDurable(q.msg.ID)
 		}
 	}
 

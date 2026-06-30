@@ -52,6 +52,15 @@ CREATE TABLE IF NOT EXISTS mail.sessions (
     expires_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS mail_sessions_expires ON mail.sessions (expires_at);
+
+-- Outbound queue: durable backing for the mtaout scheduler so acknowledged
+-- (250 OK) mail survives a crash/redeploy on ephemeral compute. One row per
+-- queued message; "item" is the JSON-encoded mtaout.QueuedItem (message + retry
+-- state). Rows are deleted on delivery or final bounce.
+CREATE TABLE IF NOT EXISTS mail.outqueue (
+    id   TEXT  PRIMARY KEY,
+    item JSONB NOT NULL
+);
 `
 
 // Migrate applies the "mail" schema DDL.  It is idempotent: safe to call on

@@ -100,7 +100,7 @@ func TestSubmissionAuthOverWire(t *testing.T) {
 			}
 			return nil, "", errors.New("invalid credentials")
 		},
-		Enqueue: func(mtaout.OutMessage) { enqueued++ },
+		Enqueue: func(mtaout.OutMessage) error { enqueued++; return nil },
 	}
 
 	// Wrong password must fail AUTH; the message must not be sent.
@@ -147,7 +147,7 @@ func TestSubmissionRejectsSenderSpoofing(t *testing.T) {
 			}
 			return nil, "", errors.New("invalid credentials")
 		},
-		Enqueue: func(mtaout.OutMessage) { t.Fatal("spoofed message must not be enqueued") },
+		Enqueue: func(mtaout.OutMessage) error { t.Fatal("spoofed message must not be enqueued"); return nil },
 	}
 	auth := func() gosmtp.Session {
 		sess, _ := be.NewSession(nil)

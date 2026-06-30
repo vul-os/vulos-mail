@@ -224,20 +224,15 @@ func main() {
 	} else {
 		log.Printf("outbound sender: built-in SMTP (direct MX delivery, self-host default)")
 	}
-	sched := mtaout.NewScheduler(mtaout.Config{
-		Sender: outSender, Pool: pool, Warmup: warm, Reputation: rep,
-		MaxPerDomain: 10,
-	})
-
-	mgr := server.NewManager(dataDir, blobs, sched)
-
 	// ── Postgres / Neon backend (cloud consolidation) ────────────────────────
 	// When DATABASE_URL or VULOS_DATABASE_URL is set, the mail event log,
-	// per-account settings, and webmail sessions are backed by Postgres in the
-	// dedicated "mail" schema of the shared Neon database.  Message bodies
-	// continue to live in object storage (Tigris/S3/FS) unchanged.
-	// When neither variable is set the JSONL/SQLite defaults are used, keeping
-	// single-binary self-host behaviour intact.
+	// per-account settings, webmail sessions, AND the durable outbound queue are
+	// backed by Postgres in the dedicated "mail" schema of the shared Neon
+	// database.  Message bodies continue to live in object storage
+	// (Tigris/S3/FS) unchanged.  When neither variable is set the JSONL/SQLite
+	// defaults are used, keeping single-binary self-host behaviour intact.
+	//
+	// Opened here (before the scheduler) so the outbound queue can share it.
 	var pgDB *sql.DB
 	if dsn := mailpg.DSN(); dsn != "" {
 		var pgErr error
@@ -248,6 +243,48 @@ func main() {
 		if pgErr = mailpg.Migrate(context.Background(), pgDB); pgErr != nil {
 			log.Fatalf("postgres migrate: %v", pgErr)
 		}
+	}
+
+	// Durable outbound queue: submission returns 250 only after a message is on
+	// stable storage, so a crash/deploy can never lose acknowledged mail (and the
+	// retry/bounce/DSN state survives a restart). Postgres-backed in the cloud
+	// (durable on ephemeral compute); fsync'd file-backed for self-host.
+	var outQueue mtaout.QueueStore
+	if pgDB != nil {
+		outQueue = mailpg.NewPGOutQueue(pgDB)
+		log.Printf("outbound queue: postgres (durable, schema=mail)")
+	} else {
+		queueDir := filepath.Join(dataDir, "queue")
+		fq, qerr := mtaout.NewFileQueue(queueDir)
+		if qerr != nil {
+			log.Fatalf("outbound queue: %v", qerr)
+		}
+		outQueue = fq
+		log.Printf("outbound queue: file-backed (fsync) at %s", queueDir)
+	}
+
+	// Warmup/reputation state is advisory (its loss never loses mail) but is made
+	// recoverable so a redeploy doesn't reset every domain's IP-warmup ramp to
+	// day 0 or let a previously-gated abusive tenant immediately resume sending.
+	deliverState := newDeliverStatePersister(filepath.Join(dataDir, "mtaout-state.json"), warm, rep)
+	deliverState.load()
+
+	sched := mtaout.NewScheduler(mtaout.Config{
+		Sender: outSender, Pool: pool, Warmup: warm, Reputation: rep, Store: outQueue,
+		MaxPerDomain: 10,
+	})
+	// Recover messages that were queued before a restart/crash so they are retried
+	// and bounced (DSN) as if the process had never stopped.
+	if rerr := sched.Recover(); rerr != nil {
+		log.Fatalf("outbound queue recover: %v", rerr)
+	}
+	if n := sched.Pending(); n > 0 {
+		log.Printf("outbound queue: recovered %d message(s) from durable storage", n)
+	}
+
+	mgr := server.NewManager(dataDir, blobs, sched)
+
+	if pgDB != nil {
 		mgr.LogOpen = mailpg.LogOpener(pgDB, nil)
 		log.Printf("event log backend: postgres (schema=mail)")
 	} else if env("VULOS_DB", "") == "sqlite" {
@@ -982,15 +1019,21 @@ func main() {
 		return srv.ListenAndServe()
 	})
 
-	// Outbound scheduler loop (+ metrics).
+	// Outbound scheduler loop (+ metrics). Warmup/reputation state is snapshotted
+	// every ~minute so a crash loses at most a minute of ramp/gate accounting.
 	go func() {
 		ctx := context.Background()
+		var sinceSave time.Duration
 		for {
 			st := sched.Tick(ctx, time.Now())
 			metrics.Outbound.WithLabelValues("delivered").Add(float64(st.Delivered))
 			metrics.Outbound.WithLabelValues("deferred").Add(float64(st.Deferred))
 			metrics.Outbound.WithLabelValues("bounced").Add(float64(st.Bounced))
 			metrics.QueueDepth.Set(float64(sched.Pending()))
+			if sinceSave += 5 * time.Second; sinceSave >= time.Minute {
+				deliverState.save()
+				sinceSave = 0
+			}
 			time.Sleep(5 * time.Second)
 		}
 	}()

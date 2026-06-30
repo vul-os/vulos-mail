@@ -40,7 +40,7 @@ func TestSubmissionStoresSentAndEnqueues(t *testing.T) {
 			}
 			return nil, "", gosmtp.ErrAuthFailed
 		},
-		Enqueue: func(m mtaout.OutMessage) { enqueued = append(enqueued, m) },
+		Enqueue: func(m mtaout.OutMessage) error { enqueued = append(enqueued, m); return nil },
 	}
 	srv := smtpin.NewSubmitServer(be, "127.0.0.1:0", "vulos.to")
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -123,7 +123,7 @@ func TestSubmissionBruteForceThrottled(t *testing.T) {
 			}
 			return nil, "", gosmtp.ErrAuthFailed
 		},
-		Enqueue: func(mtaout.OutMessage) {},
+		Enqueue: func(mtaout.OutMessage) error { return nil },
 		Limiter: lim,
 	}
 	srv := smtpin.NewSubmitServer(be, "127.0.0.1:0", "vulos.to")
@@ -176,7 +176,7 @@ func TestSubmissionDKIMSigns(t *testing.T) {
 	var enqueued []mtaout.OutMessage
 	be := &smtpin.SubmitBackend{
 		Auth:    func(string, string) (*account.Runtime, string, error) { return rt, "t", nil },
-		Enqueue: func(m mtaout.OutMessage) { enqueued = append(enqueued, m) },
+		Enqueue: func(m mtaout.OutMessage) error { enqueued = append(enqueued, m); return nil },
 		Signer:  signer,
 	}
 	sess, _ := be.NewSession(nil)
@@ -220,7 +220,7 @@ func TestSubmissionDKIMSigns(t *testing.T) {
 func TestSubmissionRequiresAuth(t *testing.T) {
 	be := &smtpin.SubmitBackend{
 		Auth:    func(string, string) (*account.Runtime, string, error) { return nil, "", gosmtp.ErrAuthFailed },
-		Enqueue: func(mtaout.OutMessage) {},
+		Enqueue: func(mtaout.OutMessage) error { return nil },
 	}
 	sess, _ := be.NewSession(nil)
 	if err := sess.Mail("x@y.com", nil); err == nil {

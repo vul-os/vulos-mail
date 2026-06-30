@@ -365,7 +365,10 @@ func (m *Manager) maybeVacation(account string, raw []byte) {
 		return
 	}
 	reply := mailsettings.BuildReply(account, sender, st.Vacation.Subject, st.Vacation.Body)
-	m.sched.Enqueue(mtaout.OutMessage{
+	// Best-effort: a vacation auto-reply that can't be persisted is dropped (it is
+	// not acknowledged mail), but record it so a persistently failing queue is
+	// visible rather than silent.
+	if err := m.sched.Enqueue(mtaout.OutMessage{
 		Tenant:     tenantOf(account),
 		FromDomain: tenantOf(account),
 		RcptDomain: tenantOf(sender),
@@ -373,7 +376,9 @@ func (m *Manager) maybeVacation(account string, raw []byte) {
 		Rcpts:      []string{sender},
 		Raw:        reply,
 		Class:      mtaout.Transactional,
-	})
+	}); err != nil {
+		metrics.MessagesReceived.WithLabelValues("vacation_enqueue_error").Inc()
+	}
 }
 
 // AuthIMAP validates IMAP credentials and returns the account runtime.
@@ -397,12 +402,18 @@ func (m *Manager) AuthSubmit(username, password string) (*account.Runtime, strin
 }
 
 // Enqueue hands an outbound message to the scheduler (used by the submission
-// backend's Enqueue hook).
-func (m *Manager) Enqueue(msg mtaout.OutMessage) {
-	if m.sched != nil {
-		m.sched.Enqueue(msg)
-		metrics.SubmissionsAccepted.Inc()
+// backend's Enqueue hook). It returns an error when the message could not be made
+// durable, so the caller can defer (4xx) rather than falsely acknowledge (250)
+// mail that would be lost on a crash.
+func (m *Manager) Enqueue(msg mtaout.OutMessage) error {
+	if m.sched == nil {
+		return nil
 	}
+	if err := m.sched.Enqueue(msg); err != nil {
+		return err
+	}
+	metrics.SubmissionsAccepted.Inc()
+	return nil
 }
 
 // GCBlobs deletes blobs not referenced by any account's live messages and older
@@ -588,10 +599,14 @@ func (m *Manager) SendRaw(_ context.Context, from string, to []string, raw []byt
 		byDomain[tenantOf(r)] = append(byDomain[tenantOf(r)], r)
 	}
 	for d, rcpts := range byDomain {
-		m.Enqueue(mtaout.OutMessage{
+		// Durability: surface a persistence failure to the caller (JMAP/webapi)
+		// so it returns an error rather than reporting a send that wasn't queued.
+		if err := m.Enqueue(mtaout.OutMessage{
 			Tenant: tenantOf(from), FromDomain: tenantOf(from), RcptDomain: d,
 			From: from, Rcpts: rcpts, Raw: raw, Class: mtaout.Transactional,
-		})
+		}); err != nil {
+			return fmt.Errorf("could not queue message for %s: %w", d, err)
+		}
 	}
 	if m.Usage != nil {
 		// One send == one message (matches the daily send-cap gate in allowPlanSend,

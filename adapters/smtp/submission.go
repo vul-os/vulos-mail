@@ -26,8 +26,10 @@ import (
 type SubmitBackend struct {
 	// Auth resolves credentials to the sender's runtime and tenant id.
 	Auth func(username, password string) (rt *account.Runtime, tenant string, err error)
-	// Enqueue hands a ready message to the mtaout scheduler.
-	Enqueue func(mtaout.OutMessage)
+	// Enqueue hands a ready message to the mtaout scheduler. It returns an error
+	// when the message could not be persisted durably, so submission can defer
+	// (4xx) instead of acknowledging (250) mail that a crash would lose.
+	Enqueue func(mtaout.OutMessage) error
 	// Class tags submitted mail (defaults to Transactional).
 	Class mtaout.TrafficClass
 	// Signer, if set, DKIM-signs each message with the From domain's key before
@@ -188,7 +190,7 @@ func (s *submitSession) Data(r io.Reader) error {
 		byDomain[d] = append(byDomain[d], rcpt)
 	}
 	for d, rcpts := range byDomain {
-		s.backend.Enqueue(mtaout.OutMessage{
+		if err := s.backend.Enqueue(mtaout.OutMessage{
 			Tenant:     s.tenant,
 			FromDomain: domainOf(efFrom),
 			RcptDomain: d,
@@ -196,7 +198,11 @@ func (s *submitSession) Data(r io.Reader) error {
 			Rcpts:      rcpts,
 			Raw:        raw,
 			Class:      s.backend.Class,
-		})
+		}); err != nil {
+			// Fail closed: the message is not durably queued, so refuse it with a
+			// transient error and let the client retry rather than silently lose it.
+			return &gosmtp.SMTPError{Code: 451, EnhancedCode: gosmtp.EnhancedCode{4, 3, 0}, Message: "message could not be queued, try again later"}
+		}
 	}
 	return nil
 }
