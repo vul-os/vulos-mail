@@ -34,9 +34,20 @@ func OpenSQLite(path string, now func() time.Time) (*SQLite, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
 	}
+	// Pin a single underlying connection. PRAGMAs are per-connection, so with the
+	// default pool a commit could land on a connection that never ran the
+	// durability PRAGMA. All access here is already serialized by s.mu, so one
+	// connection costs nothing and guarantees every commit is FULL-synced.
+	db.SetMaxOpenConns(1)
 	pragmas := []string{
 		"PRAGMA journal_mode=WAL",
 		"PRAGMA busy_timeout=5000",
+		// synchronous=FULL: fsync the WAL on EVERY commit. With WAL+NORMAL the WAL
+		// is only fsynced at checkpoint, so the MX could return 250 before the
+		// inbound row is on stable storage and a crash would lose acknowledged
+		// mail. FULL closes that window (the File/JSONL backend already fsyncs per
+		// append).
+		"PRAGMA synchronous=FULL",
 	}
 	for _, p := range pragmas {
 		if _, err := db.Exec(p); err != nil {
